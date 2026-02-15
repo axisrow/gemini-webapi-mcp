@@ -1,7 +1,7 @@
 .DS_Store
 
-# Personal / video scripts
-docs/video-*.md
+# Personal files
+docs/
 
 __pycache__/
 *.py[cod]
