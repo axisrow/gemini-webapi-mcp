@@ -76,11 +76,10 @@ uv run gemini-webapi-mcp
 
 ### 4. Установите скилл (опционально)
 
-Скопируйте `SKILL.md` в директорию команд Claude Code:
+Скопируйте папку `skill/` в директорию скиллов Claude Code:
 
 ```bash
-mkdir -p ~/.claude/commands
-cp SKILL.md ~/.claude/commands/gemini-mcp.md
+cp -r skill ~/.claude/skills/gemini-mcp
 ```
 
 ### 5. Проверьте
@@ -124,6 +123,7 @@ mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
 |------------|----------|
 | `gemini_generate_image` | Генерация новых или редактирование существующих изображений |
 | `gemini_upload_file` | Анализ файлов — видео, изображения, PDF, документы |
+| `gemini_analyze_url` | Анализ URL — YouTube-видео, веб-страницы, статьи |
 | `gemini_chat` | Текстовый чат (одиночный или multi-turn) |
 | `gemini_start_chat` | Начать multi-turn сессию |
 | `gemini_reset` | Переинициализация клиента при ошибках авторизации |
@@ -148,7 +148,12 @@ mcp-cli call gemini gemini_generate_image '{"prompt": "кот в акварел�
 mcp-cli call gemini gemini_generate_image '{"prompt": "сделай кота серым", "files": ["/path/to/cat.png"]}'
 ```
 
-Проанализировать видео:
+Проанализировать YouTube-видео или URL:
+```bash
+mcp-cli call gemini gemini_analyze_url '{"url": "https://youtube.com/watch?v=...", "prompt": "О чём это видео?"}'
+```
+
+Проанализировать файл:
 ```bash
 mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "О чём это видео?"}'
 ```
@@ -239,11 +244,10 @@ Add to `~/.config/mcp/mcp_servers.json`:
 
 ### 4. Install the skill (optional)
 
-Copy `SKILL.md` to Claude Code commands directory:
+Copy the `skill/` folder to Claude Code skills directory:
 
 ```bash
-mkdir -p ~/.claude/commands
-cp SKILL.md ~/.claude/commands/gemini-mcp.md
+cp -r skill ~/.claude/skills/gemini-mcp
 ```
 
 ### 5. Verify
@@ -285,6 +289,7 @@ If auto-detection fails or you have multiple accounts, set cookies manually:
 |------|-------------|
 | `gemini_generate_image` | Generate new or edit existing images |
 | `gemini_upload_file` | Analyze files — video, images, PDF, documents |
+| `gemini_analyze_url` | Analyze URLs — YouTube videos, webpages, articles |
 | `gemini_chat` | Text chat (single or multi-turn) |
 | `gemini_start_chat` | Start a multi-turn session |
 | `gemini_reset` | Re-initialize client on auth errors |
@@ -309,7 +314,12 @@ Edit an image:
 mcp-cli call gemini gemini_generate_image '{"prompt": "make it gray", "files": ["/path/to/cat.png"]}'
 ```
 
-Analyze a video:
+Analyze a YouTube video or URL:
+```bash
+mcp-cli call gemini gemini_analyze_url '{"url": "https://youtube.com/watch?v=...", "prompt": "Summarize this video"}'
+```
+
+Analyze a file:
 ```bash
 mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "What happens here?"}'
 ```

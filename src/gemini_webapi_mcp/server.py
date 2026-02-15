@@ -114,7 +114,6 @@ def _make_sparkle_mask(size: int, center: tuple[int, int]) -> "np.ndarray":
     draw.circle(center, 10, fill=255)
 
     # Dilate: expand mask by ~7px to cover semi-transparent halo
-    mask_arr = np.array(mask_img)
     from PIL import ImageFilter
     dilated = mask_img.filter(ImageFilter.MaxFilter(15))
     return np.array(dilated)
@@ -549,6 +548,47 @@ async def gemini_upload_file(
         )
         return response.text or "(empty response)"
 
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="gemini_analyze_url",
+    annotations={
+        "title": "Gemini URL Analysis",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": False,
+        "openWorldHint": True,
+    },
+)
+async def gemini_analyze_url(
+    url: str,
+    ctx: Context,
+    prompt: str = "Summarize this content.",
+    model: Optional[str] = None,
+) -> str:
+    """Analyze a URL — YouTube videos, webpages, articles, etc.
+
+    Gemini can watch YouTube videos and read webpages, then answer
+    questions about their content.
+
+    Args:
+        url: The URL to analyze (YouTube, article, webpage, etc.).
+        prompt: Question or instruction about the content
+                (e.g. 'Summarize this video', 'What are the key points?').
+        model: Model name. Defaults to gemini-3.0-flash.
+
+    Returns:
+        Gemini's analysis of the URL content.
+    """
+    try:
+        client = _get_client(ctx)
+        full_prompt = f"{prompt}\n\n{url}"
+        response = await client.generate_content(
+            full_prompt, model=model or DEFAULT_MODEL
+        )
+        return response.text or "(empty response)"
     except Exception as e:
         return _handle_error(e)
 
