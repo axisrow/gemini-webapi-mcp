@@ -153,39 +153,44 @@ def _patch_client(gemini_client):
 
     def patched_stream(method, url, **kwargs):
         global _image_mode
-        if method == "POST" and "StreamGenerate" in str(url) and _image_mode:
-            # --- Patch body params ---
-            data = kwargs.get("data")
-            if data and "f.req" in data:
-                try:
-                    outer = json.loads(data["f.req"])
-                    inner = json.loads(outer[1])
-                    while len(inner) < 69:
-                        inner.append(None)
-                    for idx, val in _BROWSER_PARAMS.items():
-                        inner[idx] = val
-                    outer[1] = json.dumps(inner)
-                    data["f.req"] = json.dumps(outer)
-                    kwargs["data"] = data
-                except (json.JSONDecodeError, IndexError, TypeError):
-                    pass
-
-            # --- Patch model header: update ID and trailing value ---
+        if method == "POST" and "StreamGenerate" in str(url):
             headers = kwargs.get("headers") or {}
+
+            # --- Always patch model header: update outdated IDs ---
             model_hdr = headers.get("x-goog-ext-525001261-jspb", "")
             if model_hdr:
                 for old_id, new_id in _MODEL_ID_MAP.items():
                     if old_id in model_hdr:
                         model_hdr = model_hdr.replace(old_id, new_id)
                         break
-                model_hdr = re.sub(r",1\]$", ",2]", model_hdr)
                 headers["x-goog-ext-525001261-jspb"] = model_hdr
 
-            # --- Add extra browser headers ---
-            headers["x-goog-ext-73010989-jspb"] = "[0]"
-            headers["x-goog-ext-525005358-jspb"] = json.dumps(
-                [str(uuid.uuid4()), 1]
-            )
+            # --- Image mode only: body params, trailing value, extra headers ---
+            if _image_mode:
+                data = kwargs.get("data")
+                if data and "f.req" in data:
+                    try:
+                        outer = json.loads(data["f.req"])
+                        inner = json.loads(outer[1])
+                        while len(inner) < 69:
+                            inner.append(None)
+                        for idx, val in _BROWSER_PARAMS.items():
+                            inner[idx] = val
+                        outer[1] = json.dumps(inner)
+                        data["f.req"] = json.dumps(outer)
+                        kwargs["data"] = data
+                    except (json.JSONDecodeError, IndexError, TypeError):
+                        pass
+
+                if model_hdr:
+                    model_hdr = re.sub(r",1\]$", ",2]", model_hdr)
+                    headers["x-goog-ext-525001261-jspb"] = model_hdr
+
+                headers["x-goog-ext-73010989-jspb"] = "[0]"
+                headers["x-goog-ext-525005358-jspb"] = json.dumps(
+                    [str(uuid.uuid4()), 1]
+                )
+
             kwargs["headers"] = headers
 
         return _orig_stream(method, url, **kwargs)
