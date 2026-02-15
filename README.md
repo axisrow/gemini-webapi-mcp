@@ -68,7 +68,7 @@ uv run gemini-webapi-mcp
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "/путь/к/gemini-webapi-mcp", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "/path/to/gemini-webapi-mcp", "gemini-webapi-mcp"]
     }
   }
 }
@@ -95,7 +95,9 @@ mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
 
 Сервер автоматически читает cookies из Chrome через `browser-cookie3`.
 
-Если автоопределение не работает, задайте cookies вручную:
+> **Несколько Google-аккаунтов?** При авто-определении выбор аккаунта непредсказуем. Используйте env vars `GEMINI_PSID` / `GEMINI_PSIDTS` чтобы явно указать нужный аккаунт.
+
+Если автоопределение не работает или у вас несколько аккаунтов, задайте cookies вручную:
 
 1. Откройте Chrome DevTools на gemini.google.com → Application → Cookies
 2. Скопируйте значения `__Secure-1PSID` и `__Secure-1PSIDTS`
@@ -108,8 +110,8 @@ mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
       "command": "uv",
       "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
       "env": {
-        "GEMINI_PSID": "значение___Secure-1PSID",
-        "GEMINI_PSIDTS": "значение___Secure-1PSIDTS"
+        "GEMINI_PSID": "your__Secure-1PSID_value",
+        "GEMINI_PSIDTS": "your__Secure-1PSIDTS_value"
       }
     }
   }
@@ -143,12 +145,12 @@ mcp-cli call gemini gemini_generate_image '{"prompt": "кот в акварел�
 
 Отредактировать изображение:
 ```bash
-mcp-cli call gemini gemini_generate_image '{"prompt": "сделай кота серым", "files": ["/путь/к/кот.png"]}'
+mcp-cli call gemini gemini_generate_image '{"prompt": "сделай кота серым", "files": ["/path/to/cat.png"]}'
 ```
 
 Проанализировать видео:
 ```bash
-mcp-cli call gemini gemini_upload_file '{"file_path": "/путь/к/видео.mp4", "prompt": "О чём это видео?"}'
+mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "О чём это видео?"}'
 ```
 
 ## Лицензия
@@ -254,7 +256,9 @@ mcp-cli call gemini gemini_chat '{"prompt": "Hello!"}'
 
 The server reads cookies from Chrome automatically via `browser-cookie3`.
 
-If auto-detection fails, set cookies manually:
+> **Multiple Google accounts?** Auto-detection picks an unpredictable account. Use env vars `GEMINI_PSID` / `GEMINI_PSIDTS` to explicitly select the desired account.
+
+If auto-detection fails or you have multiple accounts, set cookies manually:
 
 1. Open Chrome DevTools on gemini.google.com → Application → Cookies
 2. Copy `__Secure-1PSID` and `__Secure-1PSIDTS` values
