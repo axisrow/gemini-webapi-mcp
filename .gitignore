@@ -1,4 +1,8 @@
 .DS_Store
+
+# Personal / video scripts
+docs/video-*.md
+
 __pycache__/
 *.py[cod]
 *$py.class
