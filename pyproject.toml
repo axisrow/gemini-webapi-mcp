@@ -1,0 +1,41 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "gemini-webapi-mcp"
+version = "0.1.0"
+description = "MCP server for Google Gemini — free image generation and chat via browser cookies"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.10"
+authors = [
+    { name = "mac_andy" },
+]
+keywords = ["mcp", "gemini", "ai", "image-generation", "llm"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Software Development :: Libraries",
+]
+dependencies = [
+    "gemini-webapi>=1.19",
+    "mcp>=1.8,<2",
+    "browser-cookie3>=0.20",
+]
+
+[project.scripts]
+gemini-webapi-mcp = "gemini_webapi_mcp:main"
+
+[project.urls]
+Homepage = "https://github.com/mac-andy/gemini-webapi-mcp"
+Issues = "https://github.com/mac-andy/gemini-webapi-mcp/issues"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/gemini_webapi_mcp"]
