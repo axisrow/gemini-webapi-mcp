@@ -34,8 +34,8 @@ dependencies = [
 gemini-webapi-mcp = "gemini_webapi_mcp:main"
 
 [project.urls]
-Homepage = "https://github.com/mac-andy/gemini-webapi-mcp"
-Issues = "https://github.com/mac-andy/gemini-webapi-mcp/issues"
+Homepage = "https://github.com/AndyShaman/gemini-webapi-mcp"
+Issues = "https://github.com/AndyShaman/gemini-webapi-mcp/issues"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gemini_webapi_mcp"]
