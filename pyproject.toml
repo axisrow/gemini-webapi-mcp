@@ -7,7 +7,7 @@ name = "gemini-webapi-mcp"
 version = "0.1.0"
 description = "MCP server for Google Gemini — free image generation and chat via browser cookies"
 readme = "README.md"
-license = "MIT"
+license = "AGPL-3.0-or-later"
 requires-python = ">=3.10"
 authors = [
     { name = "mac_andy" },
@@ -16,7 +16,7 @@ keywords = ["mcp", "gemini", "ai", "image-generation", "llm"]
 classifiers = [
     "Development Status :: 4 - Beta",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
+    "License :: OSI Approved :: GNU Affero General Public License v3 or later (AGPLv3+)",
     "Programming Language :: Python :: 3",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",

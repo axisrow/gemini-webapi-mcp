@@ -177,9 +177,13 @@ mcp-cli call gemini gemini_analyze_url '{"url": "https://youtube.com/watch?v=...
 mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "О чём это видео?"}'
 ```
 
+## Благодарности
+
+Этот проект построен на основе библиотеки [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) от [@HanaokaYuzu](https://github.com/HanaokaYuzu) — реверс-инжиниринговой асинхронной Python-обёртки для веб-приложения Google Gemini. Лицензия: AGPL-3.0.
+
 ## Лицензия
 
-MIT — свободно используйте, модифицируйте и распространяйте.
+[AGPL-3.0](LICENSE) — свободно используйте, модифицируйте и распространяйте при условии сохранения открытости исходного кода.
 
 **[@AndyShaman](https://github.com/AndyShaman)** · [gemini-webapi-mcp](https://github.com/AndyShaman/gemini-webapi-mcp)
 
@@ -362,8 +366,12 @@ Analyze a file:
 mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "What happens here?"}'
 ```
 
+## Acknowledgements
+
+This project is built on top of [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) by [@HanaokaYuzu](https://github.com/HanaokaYuzu) — a reverse-engineered async Python wrapper for the Google Gemini web app. Licensed under AGPL-3.0.
+
 ## License
 
-MIT — free to use, modify, and distribute.
+[AGPL-3.0](LICENSE) — free to use, modify, and distribute, provided the source code remains open.
 
 **[@AndyShaman](https://github.com/AndyShaman)** · [gemini-webapi-mcp](https://github.com/AndyShaman/gemini-webapi-mcp)
