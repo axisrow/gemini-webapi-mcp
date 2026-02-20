@@ -60,12 +60,14 @@ mcp-cli call gemini gemini_generate_image '{"prompt": "a serene mountain lake at
 mcp-cli call gemini gemini_generate_image '{"prompt": "make the sky purple", "files": ["/path/to/image.png"]}'
 ```
 
-**Output:** PNG saved to `~/Pictures/gemini/`, full native resolution.
+**Output:** PNG saved to `~/Pictures/gemini/`, 2x upscaled resolution. Watermark auto-removed.
 
-**Resolution:**
-- Flash: always 1024x1024
-- Pro: supports aspect ratios (e.g. 1376x768 for 16:9)
-- Native resolution 1024-1376px, no upscaling
+**Resolution (2x upscale):**
+- Pro 16:9: 2816x1536 (native 1408x768, auto-upscaled 2x)
+- Pro 9:16: 1536x2816 (native 768x1408, auto-upscaled 2x)
+- Pro 1:1: 2048x2048 (native 1024x1024, auto-upscaled 2x)
+- Flash: 2048x2048 (native 1024x1024, auto-upscaled 2x)
+- Fallback to native if 2x unavailable
 
 **Aspect ratio:** Include in prompt naturally: "wide landscape 16:9", "tall portrait 9:16". Only Pro respects this — Flash always square.
 

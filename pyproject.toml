@@ -28,6 +28,7 @@ dependencies = [
     "gemini-webapi>=1.19",
     "mcp>=1.8,<2",
     "browser-cookie3>=0.20",
+    "orjson>=3.9",
     "Pillow>=10.0",
     "numpy>=1.24",
 ]

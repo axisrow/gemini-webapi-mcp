@@ -23,6 +23,7 @@
 ## Возможности
 
 - **Генерация изображений** по текстовому описанию (модель Pro с поддержкой пропорций)
+- **2x разрешение** — автоматически скачивает upscaled-версию (2816x1536 вместо 1408x768)
 - **Редактирование изображений** — отправьте картинку + промпт и получите изменённую версию
 - **Анализ файлов** — видео, изображения, PDF, документы
 - **Текстовый чат** с Gemini (Flash, Pro, Flash-Thinking)
@@ -135,6 +136,19 @@ mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
 | `GEMINI_PSIDTS` | Значение cookie `__Secure-1PSIDTS` | авто из Chrome |
 | `GEMINI_LANGUAGE` | Язык ответов Gemini (`ru`, `en`, `ja`, ...) | `en` |
 
+## Высокое разрешение (2x)
+
+Сервер автоматически запрашивает у Google увеличенную версию сгенерированного изображения — тот же механизм, что использует кнопка "Download" в веб-интерфейсе Gemini. Google выполняет server-side upscale, и вы получаете изображение в 2x разрешении:
+
+| Модель | Нативное | 2x (скачивается) |
+|--------|----------|------------------|
+| Pro (16:9) | 1408x768 | 2816x1536 |
+| Pro (9:16) | 768x1408 | 1536x2816 |
+| Pro (1:1) | 1024x1024 | 2048x2048 |
+| Flash | 1024x1024 | 2048x2048 |
+
+Если 2x-версия недоступна (таймаут, ошибка сети), сервер автоматически использует нативное разрешение.
+
 ## Удаление вотермарки
 
 Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер автоматически удаляет её с помощью нейросети [LaMa](https://github.com/advimman/lama).
@@ -229,6 +243,7 @@ mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "pro
 ## Features
 
 - **Image generation** from text descriptions (Pro model with aspect ratio support)
+- **2x resolution** — automatically downloads upscaled version (2816x1536 instead of 1408x768)
 - **Image editing** — send an image + prompt to get a modified version
 - **File analysis** — video, images, PDF, documents
 - **Text chat** with Gemini (Flash, Pro, Flash-Thinking)
@@ -338,6 +353,19 @@ If auto-detection fails or you have multiple accounts, set cookies manually:
 | `GEMINI_PSID` | Cookie value `__Secure-1PSID` | auto from Chrome |
 | `GEMINI_PSIDTS` | Cookie value `__Secure-1PSIDTS` | auto from Chrome |
 | `GEMINI_LANGUAGE` | Gemini response language (`ru`, `en`, `ja`, ...) | `en` |
+
+## High Resolution (2x)
+
+The server automatically requests an upscaled version of each generated image — the same mechanism used by the "Download" button in Gemini's web interface. Google performs server-side upscaling, delivering images at 2x resolution:
+
+| Model | Native | 2x (downloaded) |
+|-------|--------|-----------------|
+| Pro (16:9) | 1408x768 | 2816x1536 |
+| Pro (9:16) | 768x1408 | 1536x2816 |
+| Pro (1:1) | 1024x1024 | 2048x2048 |
+| Flash | 1024x1024 | 2048x2048 |
+
+If the 2x version is unavailable (timeout, network error), the server automatically falls back to native resolution.
 
 ## Watermark Removal
 

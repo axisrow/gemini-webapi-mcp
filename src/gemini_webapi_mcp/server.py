@@ -69,7 +69,6 @@ _lama_session = None
 # center at (w-57, h-57), bounding box from (w-80, h-80) to (w-33, h-33).
 # Verified across 1024x1024, 1376x768, 768x1376 images.
 _WM_OFFSET = 57       # center offset from bottom-right corner
-_WM_RADIUS = 24       # half of 48px bbox
 
 
 def _get_lama_session():
@@ -92,12 +91,15 @@ def _get_lama_session():
     return _lama_session
 
 
-def _make_sparkle_mask(size: int, center: tuple[int, int]) -> "np.ndarray":
+def _make_sparkle_mask(size: int, center: tuple[int, int], scale: int = 1) -> "np.ndarray":
     """Create a 4-point star mask matching Gemini's sparkle watermark.
 
     Uses PIL to draw two rotated ellipses + circle, then dilates
     with a simple box filter to cover semi-transparent edges.
     Returns a numpy uint8 array (0 or 255).
+
+    Args:
+        scale: 1 for native resolution, 2 for 2x upscaled images.
     """
     import numpy as np
     from PIL import Image, ImageDraw
@@ -106,24 +108,36 @@ def _make_sparkle_mask(size: int, center: tuple[int, int]) -> "np.ndarray":
     draw = ImageDraw.Draw(mask_img)
     cx, cy = center
 
-    # Vertical ellipse (narrow width, tall height)
-    draw.ellipse((cx - 6, cy - 28, cx + 6, cy + 28), fill=255)
-    # Horizontal ellipse (wide, narrow height)
-    draw.ellipse((cx - 28, cy - 6, cx + 28, cy + 6), fill=255)
-    # Center circle to fill the intersection smoothly
-    draw.circle(center, 10, fill=255)
+    # Scale ellipse dimensions: at 1x these are 6/28/10, at 2x → 12/56/20
+    ew = 6 * scale    # ellipse half-width (narrow axis)
+    eh = 28 * scale   # ellipse half-height (long axis)
+    cr = 10 * scale   # center circle radius
+    df = 15 * scale   # dilation filter size (must be odd)
+    if df % 2 == 0:
+        df += 1
 
-    # Dilate: expand mask by ~7px to cover semi-transparent halo
+    # Vertical ellipse (narrow width, tall height)
+    draw.ellipse((cx - ew, cy - eh, cx + ew, cy + eh), fill=255)
+    # Horizontal ellipse (wide, narrow height)
+    draw.ellipse((cx - eh, cy - ew, cx + eh, cy + ew), fill=255)
+    # Center circle to fill the intersection smoothly
+    draw.circle(center, cr, fill=255)
+
+    # Dilate: expand mask to cover semi-transparent halo
     from PIL import ImageFilter
-    dilated = mask_img.filter(ImageFilter.MaxFilter(15))
+    dilated = mask_img.filter(ImageFilter.MaxFilter(df))
     return np.array(dilated)
 
 
-def _remove_watermark(image_path: str) -> bool:
+def _remove_watermark(image_path: str, scale: int = 1) -> bool:
     """Remove Gemini sparkle watermark from bottom-right corner using LaMa.
 
-    The watermark is always at a fixed position: center at (w-57, h-57).
+    The watermark is always at a fixed position: center at (w-57, h-57) for
+    native (1x) images. For 2x upscaled images, position and size double.
     Returns True if removed, False if onnxruntime is not available.
+
+    Args:
+        scale: 1 for native resolution, 2 for 2x upscaled images.
     """
     session = _get_lama_session()
     if session is None:
@@ -137,17 +151,19 @@ def _remove_watermark(image_path: str) -> bool:
     if w < 512 or h < 512:
         return False
 
+    offset = _WM_OFFSET * scale  # 57 at 1x, 114 at 2x
+
     # --- Crop 512x512 from bottom-right for LaMa ---
     crop_x0 = w - 512
     crop_y0 = h - 512
     crop = img.crop((crop_x0, crop_y0, w, h))
 
     # Watermark center within the 512x512 crop
-    local_cx = 512 - _WM_OFFSET  # = 455
-    local_cy = 512 - _WM_OFFSET  # = 455
+    local_cx = 512 - offset
+    local_cy = 512 - offset
 
     # --- Build mask ---
-    mask_arr = _make_sparkle_mask(512, (local_cx, local_cy))
+    mask_arr = _make_sparkle_mask(512, (local_cx, local_cy), scale=scale)
 
     # --- LaMa inference ---
     crop_rgb = np.array(crop).astype(np.float32) / 255.0       # (512,512,3)
@@ -252,6 +268,10 @@ def _get_sessions(ctx: Context) -> dict:
 _image_mode = False
 _image_lock = asyncio.Lock()
 
+# Populated by _patched_parse hook during StreamGenerate response parsing.
+_image_tokens: dict[str, str] = {}   # preview_url -> download_token
+_last_metadata: list = []             # [cid, rid, rcid, ...] from last response
+
 
 def _patch_client(gemini_client):
     """Patch GeminiClient to send browser-compatible requests.
@@ -309,6 +329,54 @@ def _patch_client(gemini_client):
         return _orig_stream(method, url, **kwargs)
 
     http.stream = patched_stream
+
+    # --- Wrap parse_response_by_frame to capture image download tokens ---
+    import gemini_webapi.client as _gwc
+    from gemini_webapi.utils import (
+        get_nested_value,
+        parse_response_by_frame as _orig_parse,
+    )
+    import orjson as _json
+
+    def _patched_parse(buffer):
+        parts, remaining = _orig_parse(buffer)
+        for part in parts:
+            inner_json_str = get_nested_value(part, [2])
+            if not inner_json_str:
+                continue
+            try:
+                part_json = _json.loads(inner_json_str)
+                # Capture conversation metadata (cid/rid)
+                m_data = get_nested_value(part_json, [1])
+                if isinstance(m_data, list) and len(m_data) >= 2 and m_data[0]:
+                    if len(_last_metadata) >= 3:
+                        # Update cid/rid but preserve captured rcid
+                        _last_metadata[0] = m_data[0]
+                        _last_metadata[1] = m_data[1]
+                    else:
+                        _last_metadata.clear()
+                        _last_metadata.extend(m_data)
+                # Capture image download tokens + rcid from candidates
+                candidates = get_nested_value(part_json, [4], [])
+                for cand in candidates:
+                    rcid = get_nested_value(cand, [0])
+                    if rcid and isinstance(rcid, str) and rcid.startswith("rc_"):
+                        if len(_last_metadata) >= 2:
+                            # Ensure rcid is at index 2
+                            if len(_last_metadata) == 2:
+                                _last_metadata.append(rcid)
+                            else:
+                                _last_metadata[2] = rcid
+                    for gid in get_nested_value(cand, [12, 7, 0], []):
+                        url = get_nested_value(gid, [0, 3, 3])
+                        token = get_nested_value(gid, [0, 3, 5])
+                        if url and token:
+                            _image_tokens[url] = token
+            except Exception:
+                pass
+        return parts, remaining
+
+    _gwc.parse_response_by_frame = _patched_parse
     logger.info("Patched GeminiClient with browser-compatible parameters")
 
 
@@ -325,6 +393,83 @@ def _handle_error(e: Exception) -> str:
     if isinstance(e, APIError):
         return f"Error: Gemini API error — {e}"
     return f"Error: {type(e).__name__} — {e}"
+
+
+async def _fetch_download_url(client, token: str, prompt: str, metadata: list, image_index: int = 0) -> str | None:
+    """Call c8o8Fe RPC to get a high-resolution (2x) download URL for a generated image.
+
+    Google stores a 2x upscaled version accessible only through this RPC endpoint.
+    Returns the download URL or None on failure.
+    """
+    import orjson as _json
+    from gemini_webapi.constants import Endpoint
+    from gemini_webapi.utils import parse_response_by_frame, get_nested_value
+
+    cid = metadata[0] if metadata else None
+    rid = metadata[1] if len(metadata) > 1 else None
+    rcid = metadata[2] if len(metadata) > 2 else None
+    if not (rid and rcid and cid):
+        logger.warning("c8o8Fe skipped: missing metadata (cid/rid/rcid)")
+        return None
+
+    inner_payload = _json.dumps([
+        [
+            [None, None, None, [None, None, None, None, None, token]],
+            [f"http://googleusercontent.com/image_generation_content/{image_index}", image_index],
+            None,
+            [19, prompt],
+        ],
+        [rid, rcid, cid],
+        1, 0, 1,
+    ]).decode("utf-8")
+
+    outer_payload = _json.dumps(
+        [[["c8o8Fe", inner_payload, None, "generic"]]]
+    ).decode("utf-8")
+
+    params: dict = {
+        "rpcids": "c8o8Fe",
+        "_reqid": client._reqid,
+        "rt": "c",
+        "source-path": "/app",
+    }
+    client._reqid += 100000
+    if client.build_label:
+        params["bl"] = client.build_label
+    if client.session_id:
+        params["f.sid"] = client.session_id
+
+    try:
+        resp = await client.client.post(
+            Endpoint.BATCH_EXEC,
+            params=params,
+            data={"at": client.access_token, "f.req": outer_payload},
+            headers={
+                "x-goog-ext-525001261-jspb": "[1,null,null,null,null,null,null,0,[4,4]]",
+                "x-goog-ext-73010989-jspb": "[0]",
+            },
+            timeout=60,
+        )
+        if resp.status_code != 200:
+            logger.warning("c8o8Fe returned status %d", resp.status_code)
+            return None
+
+        text = resp.text
+        if text.startswith(")]}'"):
+            text = text[4:].lstrip()
+        parts, _ = parse_response_by_frame(text)
+        # parse_response_by_frame returns each sublist as a separate part:
+        # part = ['wrb.fr', 'c8o8Fe', '["url"]', None, None, None, 'generic']
+        for part in parts:
+            if isinstance(part, list) and len(part) > 2 and part[1] == "c8o8Fe":
+                inner_str = part[2]
+                if inner_str and isinstance(inner_str, str):
+                    inner = _json.loads(inner_str)
+                    if isinstance(inner, list) and inner:
+                        return inner[0]
+    except Exception as exc:
+        logger.warning("c8o8Fe failed: %s", exc)
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -481,21 +626,40 @@ async def gemini_generate_image(
         if not response.images:
             return response.text or "No images were generated. Try rephrasing your prompt."
 
+        # --- Try to get 2x download URLs via c8o8Fe RPC ---
+        metadata = list(_last_metadata)  # snapshot before it's overwritten
+        download_urls: dict[int, str] = {}
+        for i, image in enumerate(response.images):
+            token = _image_tokens.pop(image.url, None)
+            if token and metadata:
+                logger.info("Requesting 2x download URL for image %d...", i)
+                dl_url = await _fetch_download_url(client, token, prompt, metadata, i)
+                if dl_url:
+                    download_urls[i] = dl_url
+                    logger.info("Got 2x download URL for image %d", i)
+        _image_tokens.clear()  # clean up any leftover tokens
+
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         saved = []
         from gemini_webapi.types.image import GeneratedImage as _GenImg
 
         for i, image in enumerate(response.images):
-            # Strip any URL suffix and use =s0 for full-resolution PNG download.
-            image.url = re.sub(r"=[^/]*$", "", image.url)
-            image.url += "=s0"
+            if i in download_urls:
+                # Use 2x download URL (full-res PNG)
+                image.url = re.sub(r"=[^/]*$", "", download_urls[i])
+                image.url += "=s0"
+            else:
+                # Fallback: use preview URL with =s0
+                image.url = re.sub(r"=[^/]*$", "", image.url)
+                image.url += "=s0"
             # GeneratedImage supports full_size; WebImage does not.
             save_kwargs: dict = {"path": str(IMAGES_DIR), "verbose": False}
             if isinstance(image, _GenImg):
                 save_kwargs["full_size"] = False
             filepath = await image.save(**save_kwargs)
+            wm_scale = 2 if i in download_urls else 1
             try:
-                if _remove_watermark(filepath):
+                if _remove_watermark(filepath, scale=wm_scale):
                     logger.info("Watermark removed from %s", filepath)
             except Exception as wm_err:
                 logger.warning("Watermark removal failed: %s", wm_err)
