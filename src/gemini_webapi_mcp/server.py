@@ -38,7 +38,7 @@ DEFAULT_MODEL = "gemini-3.0-flash"
 # With these, the API returns images with correct aspect ratios and
 # gg-dl URLs that support full-resolution downloads.
 _BROWSER_PARAMS = {
-    1: ["en"],
+    1: [os.environ.get("GEMINI_LANGUAGE", "en")],
     6: [1],
     10: 1,
     11: 0,
@@ -483,14 +483,17 @@ async def gemini_generate_image(
 
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         saved = []
+        from gemini_webapi.types.image import GeneratedImage as _GenImg
 
         for i, image in enumerate(response.images):
             # Strip any URL suffix and use =s0 for full-resolution PNG download.
             image.url = re.sub(r"=[^/]*$", "", image.url)
             image.url += "=s0"
-            filepath = await image.save(
-                path=str(IMAGES_DIR), verbose=False, full_size=False,
-            )
+            # GeneratedImage supports full_size; WebImage does not.
+            save_kwargs: dict = {"path": str(IMAGES_DIR), "verbose": False}
+            if isinstance(image, _GenImg):
+                save_kwargs["full_size"] = False
+            filepath = await image.save(**save_kwargs)
             try:
                 if _remove_watermark(filepath):
                     logger.info("Watermark removed from %s", filepath)

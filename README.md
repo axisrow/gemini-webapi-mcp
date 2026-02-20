@@ -120,6 +120,14 @@ mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
 }
 ```
 
+## Переменные окружения
+
+| Переменная | Описание | По умолчанию |
+|------------|----------|--------------|
+| `GEMINI_PSID` | Значение cookie `__Secure-1PSID` | авто из Chrome |
+| `GEMINI_PSIDTS` | Значение cookie `__Secure-1PSIDTS` | авто из Chrome |
+| `GEMINI_LANGUAGE` | Язык ответов Gemini (`ru`, `en`, `ja`, ...) | `en` |
+
 ## Удаление вотермарки
 
 Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер автоматически удаляет её с помощью нейросети [LaMa](https://github.com/advimman/lama).
@@ -308,6 +316,14 @@ If auto-detection fails or you have multiple accounts, set cookies manually:
   }
 }
 ```
+
+## Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `GEMINI_PSID` | Cookie value `__Secure-1PSID` | auto from Chrome |
+| `GEMINI_PSIDTS` | Cookie value `__Secure-1PSIDTS` | auto from Chrome |
+| `GEMINI_LANGUAGE` | Gemini response language (`ru`, `en`, `ja`, ...) | `en` |
 
 ## Watermark Removal
 
