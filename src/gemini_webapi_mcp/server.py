@@ -378,14 +378,22 @@ def _patch_client(gemini_client):
 
 
 async def _do_generate(client, chat, prompt, **kwargs):
-    """Run image generation, with Pro→Flash fallback when no chat."""
-    if chat:
-        return await chat.send_message(prompt, **kwargs)
+    """Run image generation, with Pro→Flash fallback."""
+    from gemini_webapi import ChatSession
+
+    # send_message forwards model=self.model internally, so keep model on ChatSession.
+    model = kwargs.pop("model", "gemini-3.0-flash-thinking")
+
+    if not chat:
+        chat = ChatSession(geminiclient=client, model=model)
+    else:
+        chat.model = model
     try:
-        return await client.generate_content(prompt, model="gemini-3.0-pro", **kwargs)
+        return await chat.send_message(prompt, **kwargs)
     except Exception as err:
         logger.warning("Pro model failed (%s), falling back to flash", err)
-        return await client.generate_content(prompt, model="gemini-3.0-flash", **kwargs)
+        flash_chat = ChatSession(geminiclient=client, model="gemini-3.0-flash")
+        return await flash_chat.send_message(prompt, **kwargs)
 
 
 def _handle_error(e: Exception) -> str:
@@ -648,7 +656,6 @@ async def gemini_generate_image(
             return (
                 "Error: Pass only one of conversation_id, session_id, or chat_id."
             )
-
         if session_id:
             sessions = _get_sessions(ctx)
             chat = sessions.get(session_id)
@@ -913,7 +920,6 @@ async def gemini_delete_chat(
     try:
         if "gemini.google.com/" in chat_id:
             chat_id = chat_id.rstrip("/").split("/")[-1]
-
         client = _get_client(ctx)
         await client.delete_chat(chat_id)
 
@@ -1016,7 +1022,11 @@ async def gemini_list_chats(
             if not chat_items:
                 chat_items = get_nested_value(part_body, [2], [])
             if not chat_items:
-                continue
+                return json.dumps({
+                    "error": "unexpected_structure",
+                    "raw_body_keys": str(type(part_body)),
+                    "raw_body_preview": str(part_body)[:2000],
+                })
             for item in chat_items:
                 if not isinstance(item, list):
                     continue
