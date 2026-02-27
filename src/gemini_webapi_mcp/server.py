@@ -14,6 +14,7 @@ import random
 import re
 import string
 import sys
+import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -35,32 +36,6 @@ logger.setLevel(logging.INFO)
 IMAGES_DIR = Path.home() / "Pictures" / "gemini"
 DEFAULT_MODEL = "gemini-3.0-flash"
 
-# Browser-compatible request parameters for proper image generation.
-# Without these, the API returns 1024x1024 images regardless of prompt.
-# With these, the API returns images with correct aspect ratios and
-# gg-dl URLs that support full-resolution downloads.
-_BROWSER_PARAMS = {
-    1: [os.environ.get("GEMINI_LANGUAGE", "en")],
-    6: [1],
-    7: 1,
-    10: 1,
-    11: 0,
-    17: [[0]],
-    18: 0,
-    27: 1,
-    30: [4],
-    41: [1],
-    53: 0,
-    68: 2,
-}
-
-# Library's model IDs are outdated. Map old → current browser values.
-_MODEL_ID_MAP = {
-    "fbb127bbb056c959": "56fdd199312815e2",   # Flash
-    "9d8ca3786ebdfbea": "e6fa609c3fa255c0",   # Pro
-    "5bf011840784117a": "e051ce1aa80aa576",   # Flash-Thinking
-}
-
 # ---------------------------------------------------------------------------
 # LaMa watermark removal (optional — requires onnxruntime)
 # ---------------------------------------------------------------------------
@@ -68,9 +43,9 @@ _LAMA_URL = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
 _LAMA_CACHE = Path.home() / ".cache" / "gemini-mcp" / "lama_fp32.onnx"
 _lama_session = None
 
-# Watermark is a 4-point sparkle, always at the same fixed position:
-# center at (w-57, h-57), bounding box from (w-80, h-80) to (w-33, h-33).
-# Verified across 1024x1024, 1376x768, 768x1376 images.
+# Watermark is a 4-point sparkle (superellipse shape), fixed position:
+# center at (w-57, h-57). Measured across 1024x1024, 2048x1117,
+# 1536x2752, 2816x1536 images — position is stable.
 _WM_OFFSET = 57       # center offset from bottom-right corner
 
 
@@ -101,7 +76,7 @@ def _make_sparkle_mask(size: int, center: tuple[int, int], scale: int = 1) -> "n
     with p≈0.85, R=24px at native resolution. Measured from actual Gemini
     output across multiple aspect ratios (1024x1024, 2048x1117, 1536x2752).
 
-    Returns a numpy uint8 array with feathered edges for LaMa blending.
+    Returns a binary numpy uint8 array (0 or 255) for LaMa inpainting.
 
     Args:
         scale: 1 for native resolution, 2 for 2x upscaled images.
@@ -234,8 +209,6 @@ def _make_gen_id() -> str:
     return (base * 3)[:16]
 
 
-
-
 # ---------------------------------------------------------------------------
 # Lifespan: initialise GeminiClient once, reuse across all tool calls
 # ---------------------------------------------------------------------------
@@ -278,12 +251,10 @@ _last_metadata: list = []             # [cid, rid, rcid, ...] from last response
 
 
 def _patch_client(gemini_client):
-    """Patch GeminiClient to send browser-compatible requests.
+    """Patch GeminiClient for image generation and 2x download support.
 
-    Intercepts StreamGenerate requests to:
-    1. Inject browser payload parameters for image generation (only when _image_mode is set).
-    2. Update outdated model IDs in the x-goog-ext header.
-    3. Add extra browser headers (x-goog-ext-73010989, x-goog-ext-525005358).
+    1. Add browser headers during image generation (_image_mode).
+    2. Intercept response parsing to capture image download tokens for c8o8Fe RPC.
     """
     http = gemini_client.client  # curl_cffi.AsyncSession
     _orig_request = http.request
