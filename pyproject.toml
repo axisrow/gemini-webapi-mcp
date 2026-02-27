@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "gemini-webapi-mcp"
-version = "0.1.0"
+version = "0.1.2"
 description = "MCP server for Google Gemini — free image generation and chat via browser cookies"
 readme = "README.md"
 license = "AGPL-3.0-or-later"

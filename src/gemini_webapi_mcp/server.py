@@ -243,7 +243,7 @@ async def app_lifespan(server):
     psid, psidts = _resolve_cookies()
 
     client = GeminiClient(secure_1psid=psid, secure_1psidts=psidts or None)
-    await client.init(timeout=120, auto_close=False, auto_refresh=True)
+    await client.init(timeout=600, watchdog_timeout=120, auto_close=False, auto_refresh=True)
     _patch_client(client)
 
     yield {"gemini_client": client, "chat_sessions": {}}
@@ -378,6 +378,29 @@ def _patch_client(gemini_client):
 
     _gwc.parse_response_by_frame = _patched_parse
     logger.info("Patched GeminiClient with browser-compatible parameters")
+
+    # --- Increase retry tolerance for long image generation ---
+    import gemini_webapi.utils.decorators as _dmod
+    from gemini_webapi.utils.decorators import running
+
+    _dmod.DELAY_FACTOR = 2  # Was 5 — reconnect faster after stream interrupts
+
+    _orig_gen = type(gemini_client)._generate
+    while hasattr(_orig_gen, '__wrapped__'):
+        _orig_gen = _orig_gen.__wrapped__
+    type(gemini_client)._generate = running(retry=12)(_orig_gen)
+    logger.info("Patched _generate retry: 12 retries, DELAY_FACTOR=2")
+
+
+async def _do_generate(client, chat, prompt, **kwargs):
+    """Run image generation, with Pro→Flash fallback when no chat."""
+    if chat:
+        return await chat.send_message(prompt, **kwargs)
+    try:
+        return await client.generate_content(prompt, model="gemini-3.0-pro", **kwargs)
+    except Exception as err:
+        logger.warning("Pro model failed (%s), falling back to flash", err)
+        return await client.generate_content(prompt, model="gemini-3.0-flash", **kwargs)
 
 
 def _handle_error(e: Exception) -> str:
@@ -580,8 +603,9 @@ async def gemini_chat(
 async def gemini_generate_image(
     prompt: str,
     ctx: Context,
-    model: Optional[str] = None,
     files: Optional[list[str]] = None,
+    session_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
 ) -> str:
     """Generate or edit images with Gemini.
 
@@ -593,9 +617,11 @@ async def gemini_generate_image(
     Args:
         prompt: Description of the image to generate, or editing instruction
                 (e.g. 'change the background to blue', 'make it a cartoon').
-        model: Model name. Defaults to gemini-3.0-pro (supports non-square
-               aspect ratios). Flash only generates 1024x1024.
         files: Optional list of file paths to images to edit/transform.
+        session_id: Optional MCP session ID from gemini_start_chat. Generates
+                    images within an existing chat session (preserves context).
+        chat_id: Optional Gemini web chat ID from URL (e.g. '67c72239696d5d37').
+                 Connects to an existing Gemini web conversation.
 
     Returns:
         JSON with generated image paths and metadata, or an error message.
@@ -613,13 +639,42 @@ async def gemini_generate_image(
                     return f"Error: File not found — {p}"
                 resolved_files.append(str(p))
 
+        # Resolve chat session
+        chat = None
+        if session_id:
+            sessions = _get_sessions(ctx)
+            chat = sessions.get(session_id)
+            if not chat:
+                return f"Error: Session '{session_id}' not found. Use gemini_start_chat first."
+        elif chat_id:
+            from gemini_webapi import ChatSession
+            chat = ChatSession(geminiclient=client, cid=chat_id, rid=None, rcid=None)
+            short_id = str(uuid.uuid4())[:8]
+            _get_sessions(ctx)[short_id] = chat
+
         async with _image_lock:
             _image_mode = True
             try:
-                kwargs = {"model": model or "gemini-3.0-pro"}
+                kwargs = {}
                 if resolved_files:
                     kwargs["files"] = resolved_files
-                response = await client.generate_content(prompt, **kwargs)
+                gen_task = asyncio.create_task(
+                    _do_generate(client, chat, prompt, **kwargs)
+                )
+                step = 0
+                while not gen_task.done():
+                    step += 1
+                    await ctx.report_progress(step, total=None)
+                    await ctx.info(
+                        f"Image generation in progress... ({step * 15}s)"
+                    )
+                    try:
+                        await asyncio.wait_for(
+                            asyncio.shield(gen_task), timeout=15
+                        )
+                    except asyncio.TimeoutError:
+                        continue
+                response = gen_task.result()
             finally:
                 _image_mode = False
 
@@ -795,11 +850,158 @@ async def gemini_reset(ctx: Context) -> str:
         new_client = GeminiClient(
             secure_1psid=psid, secure_1psidts=psidts or None
         )
-        await new_client.init(timeout=30, auto_close=False, auto_refresh=True)
+        await new_client.init(timeout=600, watchdog_timeout=120, auto_close=False, auto_refresh=True)
         _patch_client(new_client)
 
         ctx.request_context.lifespan_context["gemini_client"] = new_client
         return "Gemini client re-initialised with fresh cookies."
+
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="gemini_delete_chat",
+    annotations={
+        "title": "Delete Gemini Chat",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def gemini_delete_chat(
+    chat_id: str,
+    ctx: Context,
+) -> str:
+    """Delete a Gemini conversation by its chat ID or URL.
+
+    Args:
+        chat_id: Chat ID or full Gemini URL, e.g.:
+                 - 'e76afce3eb398fa9'
+                 - 'https://gemini.google.com/app/e76afce3eb398fa9'
+
+    Returns:
+        Confirmation message or error.
+    """
+    try:
+        if "gemini.google.com/" in chat_id:
+            chat_id = chat_id.rstrip("/").split("/")[-1]
+
+        client = _get_client(ctx)
+        await client.delete_chat(chat_id)
+
+        # Удалить из локальных сессий, если есть
+        sessions = _get_sessions(ctx)
+        to_remove = [
+            sid for sid, chat in sessions.items()
+            if getattr(chat, "cid", None) == chat_id
+        ]
+        for sid in to_remove:
+            del sessions[sid]
+
+        return json.dumps({
+            "deleted": chat_id,
+            "removed_sessions": to_remove,
+        })
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="gemini_list_sessions",
+    annotations={
+        "title": "List Local Gemini Sessions",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def gemini_list_sessions(ctx: Context) -> str:
+    """List all chat sessions created in the current MCP server run.
+
+    Returns:
+        JSON with list of sessions: session_id, cid, model.
+    """
+    sessions = _get_sessions(ctx)
+    result = []
+    for sid, chat in sessions.items():
+        result.append({
+            "session_id": sid,
+            "cid": getattr(chat, "cid", None),
+            "model": getattr(chat, "model", None),
+        })
+    return json.dumps({"sessions": result, "count": len(result)})
+
+
+@mcp.tool(
+    name="gemini_list_chats",
+    annotations={
+        "title": "List Gemini Chats",
+        "readOnlyHint": True,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def gemini_list_chats(
+    ctx: Context,
+    count: int = 50,
+) -> str:
+    """Fetch a list of recent Gemini conversations from the API.
+
+    Args:
+        count: Maximum number of chats to return (default 50).
+
+    Returns:
+        JSON with list of chats (cid, title if available).
+    """
+    try:
+        from gemini_webapi.constants import GRPC
+        from gemini_webapi.types.grpc import RPCData
+        from gemini_webapi.utils import (
+            extract_json_from_response,
+            get_nested_value,
+        )
+
+        client = _get_client(ctx)
+        response = await client._batch_execute([
+            RPCData(
+                rpcid=GRPC.LIST_CHATS,
+                payload=json.dumps([count, None, None]),
+                identifier="list_chats",
+            ),
+        ])
+
+        response_json = extract_json_from_response(response.text)
+
+        chats = []
+        for part in response_json:
+            if not isinstance(part, list) or len(part) < 3:
+                continue
+            part_body_str = get_nested_value(part, [2])
+            if not part_body_str:
+                continue
+            part_body = json.loads(part_body_str)
+            if not isinstance(part_body, list):
+                continue
+            chat_items = get_nested_value(part_body, [0], [])
+            if not chat_items:
+                chat_items = get_nested_value(part_body, [2], [])
+            if not chat_items:
+                continue
+            for item in chat_items:
+                if not isinstance(item, list):
+                    continue
+                chat_info = {"cid": item[0] if len(item) > 0 else None}
+                if len(item) > 1 and isinstance(item[1], str):
+                    chat_info["title"] = item[1]
+                elif len(item) > 2 and isinstance(item[2], str):
+                    chat_info["title"] = item[2]
+                chats.append(chat_info)
+
+        return json.dumps({"chats": chats, "count": len(chats)})
 
     except Exception as e:
         return _handle_error(e)
