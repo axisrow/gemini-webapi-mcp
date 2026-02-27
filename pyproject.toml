@@ -25,12 +25,13 @@ classifiers = [
     "Topic :: Software Development :: Libraries",
 ]
 dependencies = [
-    "gemini-webapi>=1.19",
+    "gemini-webapi @ git+https://github.com/xob0t/Gemini-API.git",
     "mcp>=1.8,<2",
     "browser-cookie3>=0.20",
     "orjson>=3.9",
     "Pillow>=10.0",
     "numpy>=1.24",
+    "curl-cffi>=0.14.0",
 ]
 
 [project.optional-dependencies]
@@ -43,6 +44,9 @@ gemini-webapi-mcp = "gemini_webapi_mcp:main"
 Homepage = "https://github.com/AndyShaman/gemini-webapi-mcp"
 Repository = "https://github.com/AndyShaman/gemini-webapi-mcp"
 Issues = "https://github.com/AndyShaman/gemini-webapi-mcp/issues"
+
+[tool.hatch.metadata]
+allow-direct-references = true
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/gemini_webapi_mcp"]

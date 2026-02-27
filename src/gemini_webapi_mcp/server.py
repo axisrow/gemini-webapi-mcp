@@ -10,11 +10,14 @@ import asyncio
 import json
 import logging
 import os
+import random
 import re
+import string
 import sys
 import urllib.request
 import uuid
 from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -33,31 +36,6 @@ logger.setLevel(logging.INFO)
 IMAGES_DIR = Path.home() / "Pictures" / "gemini"
 DEFAULT_MODEL = "gemini-3.0-flash"
 
-# Browser-compatible request parameters for proper image generation.
-# Without these, the API returns 1024x1024 images regardless of prompt.
-# With these, the API returns images with correct aspect ratios and
-# gg-dl URLs that support full-resolution downloads.
-_BROWSER_PARAMS = {
-    1: [os.environ.get("GEMINI_LANGUAGE", "en")],
-    6: [1],
-    10: 1,
-    11: 0,
-    17: [[0]],
-    18: 0,
-    27: 1,
-    30: [4],
-    41: [1],
-    53: 0,
-    68: 2,
-}
-
-# Library's model IDs are outdated. Map old → current browser values.
-_MODEL_ID_MAP = {
-    "fbb127bbb056c959": "56fdd199312815e2",   # Flash
-    "9d8ca3786ebdfbea": "e6fa609c3fa255c0",   # Pro
-    "5bf011840784117a": "e051ce1aa80aa576",   # Flash-Thinking
-}
-
 # ---------------------------------------------------------------------------
 # LaMa watermark removal (optional — requires onnxruntime)
 # ---------------------------------------------------------------------------
@@ -65,9 +43,9 @@ _LAMA_URL = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
 _LAMA_CACHE = Path.home() / ".cache" / "gemini-mcp" / "lama_fp32.onnx"
 _lama_session = None
 
-# Watermark is a 4-point sparkle, always at the same fixed position:
-# center at (w-57, h-57), bounding box from (w-80, h-80) to (w-33, h-33).
-# Verified across 1024x1024, 1376x768, 768x1376 images.
+# Watermark is a 4-point sparkle (superellipse shape), fixed position:
+# center at (w-57, h-57). Measured across 1024x1024, 2048x1117,
+# 1536x2752, 2816x1536 images — position is stable.
 _WM_OFFSET = 57       # center offset from bottom-right corner
 
 
@@ -94,38 +72,31 @@ def _get_lama_session():
 def _make_sparkle_mask(size: int, center: tuple[int, int], scale: int = 1) -> "np.ndarray":
     """Create a 4-point star mask matching Gemini's sparkle watermark.
 
-    Uses PIL to draw two rotated ellipses + circle, then dilates
-    with a simple box filter to cover semi-transparent edges.
-    Returns a numpy uint8 array (0 or 255).
+    The sparkle follows a superellipse (Lamé curve): |x/R|^p + |y/R|^p <= 1
+    with p≈0.85, R=24px at native resolution. Measured from actual Gemini
+    output across multiple aspect ratios (1024x1024, 2048x1117, 1536x2752).
+
+    Returns a binary numpy uint8 array (0 or 255) for LaMa inpainting.
 
     Args:
         scale: 1 for native resolution, 2 for 2x upscaled images.
     """
     import numpy as np
-    from PIL import Image, ImageDraw
+    from PIL import Image, ImageFilter
 
-    mask_img = Image.new("L", (size, size), 0)
-    draw = ImageDraw.Draw(mask_img)
     cx, cy = center
+    R = 24 * scale   # sparkle radius: 24px at 1x, 48px at 2x
+    p = 0.85          # superellipse exponent (4-pointed star shape)
 
-    # Scale ellipse dimensions: at 1x these are 6/28/10, at 2x → 12/56/20
-    ew = 6 * scale    # ellipse half-width (narrow axis)
-    eh = 28 * scale   # ellipse half-height (long axis)
-    cr = 10 * scale   # center circle radius
-    df = 15 * scale   # dilation filter size (must be odd)
-    if df % 2 == 0:
-        df += 1
+    y_grid, x_grid = np.ogrid[:size, :size]
+    dx = np.abs(x_grid - cx).astype(float)
+    dy = np.abs(y_grid - cy).astype(float)
+    val = (dx / R) ** p + (dy / R) ** p
+    mask_arr = np.where(val <= 1.0, 255, 0).astype(np.uint8)
 
-    # Vertical ellipse (narrow width, tall height)
-    draw.ellipse((cx - ew, cy - eh, cx + ew, cy + eh), fill=255)
-    # Horizontal ellipse (wide, narrow height)
-    draw.ellipse((cx - eh, cy - ew, cx + eh, cy + ew), fill=255)
-    # Center circle to fill the intersection smoothly
-    draw.circle(center, cr, fill=255)
-
-    # Dilate: expand mask to cover semi-transparent halo
-    from PIL import ImageFilter
-    dilated = mask_img.filter(ImageFilter.MaxFilter(df))
+    mask_img = Image.fromarray(mask_arr)
+    mf = 7 * scale + (0 if (7 * scale) % 2 == 1 else 1)  # 7 at 1x, 15 at 2x
+    dilated = mask_img.filter(ImageFilter.MaxFilter(mf))
     return np.array(dilated)
 
 
@@ -232,6 +203,12 @@ def _resolve_cookies() -> tuple[str, str]:
     )
 
 
+def _make_gen_id() -> str:
+    """Generate a client-side gen_id for c8o8Fe RPC (16-char repeating pattern)."""
+    base = "".join(random.choices(string.ascii_lowercase + string.digits, k=6))
+    return (base * 3)[:16]
+
+
 # ---------------------------------------------------------------------------
 # Lifespan: initialise GeminiClient once, reuse across all tool calls
 # ---------------------------------------------------------------------------
@@ -274,61 +251,101 @@ _last_metadata: list = []             # [cid, rid, rcid, ...] from last response
 
 
 def _patch_client(gemini_client):
-    """Patch GeminiClient to send browser-compatible requests.
+    """Patch GeminiClient for image generation and 2x download support.
 
-    Intercepts StreamGenerate requests to:
-    1. Inject browser payload parameters for image generation (only when _image_mode is set).
-    2. Update outdated model IDs in the x-goog-ext header.
-    3. Add extra browser headers (x-goog-ext-73010989, x-goog-ext-525005358).
+    1. Override model ID in header (Google rotates IDs periodically).
+    2. Add browser-compatible body params and extra headers during image generation.
+    3. Intercept response parsing to capture image download tokens for c8o8Fe RPC.
     """
-    http = gemini_client.client  # httpx.AsyncClient
-    _orig_stream = http.stream
+    # Google rotates model IDs periodically. Update these when generation fails (error 1052).
+    _MODEL_ID_MAP = {
+        "5bf011840784117a": "e051ce1aa80aa576",  # flash-thinking (Nano Banana 2)
+        "9d8ca3786ebdfbea": "e051ce1aa80aa576",  # pro -> same current ID
+        "fbb127bbb056c959": "e051ce1aa80aa576",  # flash -> same current ID
+    }
 
-    def patched_stream(method, url, **kwargs):
+    # Browser-compatible body params (indices in inner_req_list).
+    # Without these, certain operations (image editing with files) may fail.
+    _BROWSER_PARAMS = {
+        1: [os.environ.get("GEMINI_LANGUAGE", "ru")],
+        6: [1],
+        10: 1,
+        11: 0,
+        17: [[0]],
+        18: 0,
+        27: 1,
+        30: [4],
+        41: [1],
+        53: 0,
+        68: 2,
+    }
+
+    http = gemini_client.client  # curl_cffi.AsyncSession
+    _orig_request = http.request
+
+    async def patched_request(method, url, **kwargs):
         global _image_mode
-        if method == "POST" and "StreamGenerate" in str(url):
+        if method == "POST" and "StreamGenerate" in str(url) and _image_mode:
             headers = kwargs.get("headers") or {}
 
-            # --- Always patch model header: update outdated IDs ---
+            # Remap model ID in the model header
             model_hdr = headers.get("x-goog-ext-525001261-jspb", "")
             if model_hdr:
                 for old_id, new_id in _MODEL_ID_MAP.items():
                     if old_id in model_hdr:
                         model_hdr = model_hdr.replace(old_id, new_id)
                         break
+                # Update trailing version flag: ,1] -> ,2]
+                if model_hdr.endswith(",1]"):
+                    model_hdr = model_hdr[:-2] + "2]"
                 headers["x-goog-ext-525001261-jspb"] = model_hdr
 
-            # --- Image mode only: body params, trailing value, extra headers ---
-            if _image_mode:
-                data = kwargs.get("data")
-                if data and "f.req" in data:
-                    try:
-                        outer = json.loads(data["f.req"])
-                        inner = json.loads(outer[1])
-                        while len(inner) < 69:
-                            inner.append(None)
-                        for idx, val in _BROWSER_PARAMS.items():
-                            inner[idx] = val
-                        outer[1] = json.dumps(inner)
-                        data["f.req"] = json.dumps(outer)
-                        kwargs["data"] = data
-                    except (json.JSONDecodeError, IndexError, TypeError):
-                        pass
-
-                if model_hdr:
-                    model_hdr = re.sub(r",1\]$", ",2]", model_hdr)
-                    headers["x-goog-ext-525001261-jspb"] = model_hdr
-
-                headers["x-goog-ext-73010989-jspb"] = "[0]"
-                headers["x-goog-ext-525005358-jspb"] = json.dumps(
-                    [str(uuid.uuid4()), 1]
-                )
+            headers["x-goog-ext-73010989-jspb"] = "[0]"
+            headers["x-goog-ext-73010990-jspb"] = "[0]"
+            headers["x-goog-ext-525005358-jspb"] = json.dumps(
+                [str(uuid.uuid4()), 1]
+            )
 
             kwargs["headers"] = headers
 
-        return _orig_stream(method, url, **kwargs)
+            # Inject browser-compatible body params into f.req
+            data = kwargs.get("data")
+            if isinstance(data, dict) and "f.req" in data:
+                try:
+                    outer = json.loads(data["f.req"])
+                    inner = json.loads(outer[1])
+                    for idx, val in _BROWSER_PARAMS.items():
+                        if inner[idx] is None:
+                            inner[idx] = val
 
-    http.stream = patched_stream
+                    # Fix file_data format:
+                    # Library:  [[[url], "name"]]
+                    # Browser:  [[[url, 1, null, "mime"], "name", null*6, [0]]]
+                    file_data = inner[0][3] if isinstance(inner[0], list) and len(inner[0]) > 3 else None
+                    if file_data and isinstance(file_data, list):
+                        _MIME_MAP = {
+                            ".png": "image/png", ".jpg": "image/jpeg",
+                            ".jpeg": "image/jpeg", ".webp": "image/webp",
+                            ".gif": "image/gif", ".bmp": "image/bmp",
+                        }
+                        for fd in file_data:
+                            if isinstance(fd, list) and len(fd) == 2:
+                                url_arr, filename = fd[0], fd[1]
+                                if isinstance(url_arr, list) and len(url_arr) == 1:
+                                    ext = Path(filename).suffix.lower() if isinstance(filename, str) else ""
+                                    mime = _MIME_MAP.get(ext, "image/png")
+                                    fd[0] = [url_arr[0], 1, None, mime]
+                                    fd.extend([None, None, None, None, None, None, [0]])
+
+                    outer[1] = json.dumps(inner)
+                    data["f.req"] = json.dumps(outer)
+                    kwargs["data"] = data
+                except Exception:
+                    pass
+
+        return await _orig_request(method, url, **kwargs)
+
+    http.request = patched_request
 
     # --- Wrap parse_response_by_frame to capture image download tokens ---
     import gemini_webapi.client as _gwc
@@ -393,25 +410,28 @@ def _patch_client(gemini_client):
 
 
 async def _do_generate(client, chat, prompt, **kwargs):
-    """Run image generation, with Pro→Flash fallback when no chat."""
-    if chat:
-        return await chat.send_message(prompt, **kwargs)
+    """Run image generation, with Pro→Flash fallback."""
+    from gemini_webapi import ChatSession
+
+    if not chat:
+        chat = ChatSession(geminiclient=client, model="gemini-3.0-pro")
     try:
-        return await client.generate_content(prompt, model="gemini-3.0-pro", **kwargs)
+        return await chat.send_message(prompt, **kwargs)
     except Exception as err:
         logger.warning("Pro model failed (%s), falling back to flash", err)
-        return await client.generate_content(prompt, model="gemini-3.0-flash", **kwargs)
+        flash_chat = ChatSession(geminiclient=client, model="gemini-3.0-flash")
+        return await flash_chat.send_message(prompt, **kwargs)
 
 
 def _handle_error(e: Exception) -> str:
-    from gemini_webapi import AuthError, APIError, TimeoutError as GeminiTimeout
+    from gemini_webapi import AuthError, APIError, RequestTimeoutError
 
     if isinstance(e, AuthError):
         return (
             "Error: Authentication failed. Cookies may have expired. "
             "Re-login to gemini.google.com in Chrome, then call gemini_reset."
         )
-    if isinstance(e, GeminiTimeout):
+    if isinstance(e, RequestTimeoutError):
         return "Error: Request timed out. Try again or use a lighter model."
     if isinstance(e, APIError):
         return f"Error: Gemini API error — {e}"
@@ -435,14 +455,17 @@ async def _fetch_download_url(client, token: str, prompt: str, metadata: list, i
         logger.warning("c8o8Fe skipped: missing metadata (cid/rid/rcid)")
         return None
 
+    gen_id = _make_gen_id()
     inner_payload = _json.dumps([
         [
             [None, None, None, [None, None, None, None, None, token]],
             [f"http://googleusercontent.com/image_generation_content/{image_index}", image_index],
             None,
             [19, prompt],
+            None, None, None, None, None,
+            gen_id,
         ],
-        [rid, rcid, cid],
+        [rid, rcid, cid, None, gen_id],
         1, 0, 1,
     ]).decode("utf-8")
 
@@ -617,6 +640,8 @@ async def gemini_generate_image(
     Args:
         prompt: Description of the image to generate, or editing instruction
                 (e.g. 'change the background to blue', 'make it a cartoon').
+        model: Model name. Defaults to gemini-3.0-flash-thinking
+               (Nano Banana 2, supports non-square aspect ratios).
         files: Optional list of file paths to images to edit/transform.
         session_id: Optional MCP session ID from gemini_start_chat. Generates
                     images within an existing chat session (preserves context).
@@ -655,7 +680,7 @@ async def gemini_generate_image(
         async with _image_lock:
             _image_mode = True
             try:
-                kwargs = {}
+                kwargs = {"model": model or "gemini-3.0-flash-thinking"}
                 if resolved_files:
                     kwargs["files"] = resolved_files
                 gen_task = asyncio.create_task(
@@ -696,24 +721,28 @@ async def gemini_generate_image(
 
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
         saved = []
-        from gemini_webapi.types.image import GeneratedImage as _GenImg
 
         for i, image in enumerate(response.images):
-            if i in download_urls:
-                # Use 2x download URL (full-res PNG)
-                image.url = re.sub(r"=[^/]*$", "", download_urls[i])
-                image.url += "=s0"
-            else:
-                # Fallback: use preview URL with =s0
-                image.url = re.sub(r"=[^/]*$", "", image.url)
-                image.url += "=s0"
-            # GeneratedImage supports full_size; WebImage does not.
-            save_kwargs: dict = {"path": str(IMAGES_DIR), "verbose": False}
-            if isinstance(image, _GenImg):
-                save_kwargs["full_size"] = False
-            filepath = await image.save(**save_kwargs)
-            # Detect 2x by actual file size, not by URL source
-            # (c8o8Fe may return a URL that still serves 1x for Flash)
+            # Use 2x upscale URL from c8o8Fe if available
+            has_upscale = i in download_urls
+            if has_upscale:
+                # Use c8o8Fe 2x URL with =s0 for full resolution (not =s2048 which downscales)
+                image.url = re.sub(r"=[^/]*$", "", download_urls[i]) + "=s0"
+
+            try:
+                filepath = await image.save(
+                    path=str(IMAGES_DIR),
+                    filename=f"{datetime.now().strftime('%Y%m%d%H%M%S')}_{i}.png",
+                    verbose=False,
+                    full_size=not has_upscale,  # c8o8Fe already has =s0; preview gets =s2048
+                )
+            except Exception as save_err:
+                logger.warning("Image save failed for %d: %s", i, save_err)
+                continue
+
+            if not filepath:
+                continue
+
             from PIL import Image as _PILImage
             _saved_img = _PILImage.open(filepath)
             _sw, _sh = _saved_img.size
@@ -874,20 +903,16 @@ async def gemini_delete_chat(
     chat_id: str,
     ctx: Context,
 ) -> str:
-    """Delete a Gemini conversation by its chat ID or URL.
+    """Delete a Gemini conversation by its chat ID.
 
     Args:
-        chat_id: Chat ID or full Gemini URL, e.g.:
-                 - 'e76afce3eb398fa9'
-                 - 'https://gemini.google.com/app/e76afce3eb398fa9'
+        chat_id: The Gemini chat ID (cid) to delete, e.g. 'c_...' from the
+                 Gemini web URL or from a ChatSession.
 
     Returns:
         Confirmation message or error.
     """
     try:
-        if "gemini.google.com/" in chat_id:
-            chat_id = chat_id.rstrip("/").split("/")[-1]
-
         client = _get_client(ctx)
         await client.delete_chat(chat_id)
 
