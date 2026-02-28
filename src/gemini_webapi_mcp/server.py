@@ -242,6 +242,14 @@ def _get_sessions(ctx: Context) -> dict:
     return ctx.request_context.lifespan_context["chat_sessions"]
 
 
+def _resolve_chat_id(raw: str) -> str:
+    """Extract cid from a Gemini URL or return raw chat_id as-is."""
+    m = re.match(r"https?://gemini\.google\.com/app/(?:c_)?([a-f0-9]+)", raw)
+    if m:
+        return f"c_{m.group(1)}"
+    return raw
+
+
 _image_mode = False
 _image_lock = asyncio.Lock()
 
@@ -259,9 +267,11 @@ def _patch_client(gemini_client):
     """
     # Google rotates model IDs periodically. Update these when generation fails (error 1052).
     _MODEL_ID_MAP = {
-        "5bf011840784117a": "e051ce1aa80aa576",  # flash-thinking (Nano Banana 2)
-        "9d8ca3786ebdfbea": "e051ce1aa80aa576",  # pro -> same current ID
-        "fbb127bbb056c959": "e051ce1aa80aa576",  # flash -> same current ID
+        "5bf011840784117a": "56fdd199312815e2",  # flash-thinking (Nano Banana 2)
+        "9d8ca3786ebdfbea": "56fdd199312815e2",  # pro -> same current ID
+        "fbb127bbb056c959": "56fdd199312815e2",  # flash -> same current ID
+        "e051ce1aa80aa576": "56fdd199312815e2",  # previous rotation -> current
+        "e6fa609c3fa255c0": "56fdd199312815e2",  # feb 2026 rotation -> current
     }
 
     # Browser-compatible body params (indices in inner_req_list).
@@ -271,7 +281,7 @@ def _patch_client(gemini_client):
         6: [1],
         10: 1,
         11: 0,
-        17: [[0]],
+        17: [[2]],
         18: 0,
         27: 1,
         30: [4],
@@ -285,7 +295,13 @@ def _patch_client(gemini_client):
 
     async def patched_request(method, url, **kwargs):
         global _image_mode
-        if method == "POST" and "StreamGenerate" in str(url) and _image_mode:
+        is_generate = method == "POST" and "StreamGenerate" in str(url)
+        if is_generate:
+            logger.info("patched_request: _image_mode=%s, method=%s, url_contains_StreamGenerate=True",
+                        _image_mode, method)
+            logger.info("patched_request: headers_keys=%s",
+                        list((kwargs.get("headers") or {}).keys()))
+        if is_generate and _image_mode:
             headers = kwargs.get("headers") or {}
 
             # Remap model ID in the model header
@@ -307,6 +323,7 @@ def _patch_client(gemini_client):
             )
 
             kwargs["headers"] = headers
+            logger.info("patched_request: headers after patch: %s", list(headers.keys()))
 
             # Inject browser-compatible body params into f.req
             data = kwargs.get("data")
@@ -314,9 +331,20 @@ def _patch_client(gemini_client):
                 try:
                     outer = json.loads(data["f.req"])
                     inner = json.loads(outer[1])
+
+                    # Log chat metadata (cid) for debugging
+                    metadata = inner[2] if len(inner) > 2 else None
+                    cid = metadata[0] if isinstance(metadata, list) and metadata else None
+                    logger.info("patched_request: cid=%s, model_hdr=%s",
+                                cid, headers.get("x-goog-ext-525001261-jspb", "")[:40])
+
                     for idx, val in _BROWSER_PARAMS.items():
                         if inner[idx] is None:
                             inner[idx] = val
+
+                    # Log which browser params were injected
+                    injected = [idx for idx, val in _BROWSER_PARAMS.items() if inner[idx] == val]
+                    logger.info("patched_request: injected browser params at indices %s", injected)
 
                     # Fix file_data format:
                     # Library:  [[[url], "name"]]
@@ -340,8 +368,10 @@ def _patch_client(gemini_client):
                     outer[1] = json.dumps(inner)
                     data["f.req"] = json.dumps(outer)
                     kwargs["data"] = data
-                except Exception:
-                    pass
+                except Exception as exc:
+                    logger.warning("patched_request: body injection failed: %s", exc)
+            else:
+                logger.warning("patched_request: no f.req in data, data type=%s", type(data))
 
         return await _orig_request(method, url, **kwargs)
 
@@ -413,8 +443,14 @@ async def _do_generate(client, chat, prompt, **kwargs):
     """Run image generation, with Pro→Flash fallback."""
     from gemini_webapi import ChatSession
 
+    # Extract model from kwargs — send_message passes model=self.model
+    # to generate_content, so we must set it on ChatSession, not in kwargs.
+    model = kwargs.pop("model", "gemini-3.0-flash-thinking")
+
     if not chat:
-        chat = ChatSession(geminiclient=client, model="gemini-3.0-pro")
+        chat = ChatSession(geminiclient=client, model=model)
+    else:
+        chat.model = model
     try:
         return await chat.send_message(prompt, **kwargs)
     except Exception as err:
@@ -576,8 +612,13 @@ async def gemini_chat(
     ctx: Context,
     model: Optional[str] = None,
     session_id: Optional[str] = None,
+    chat_id: Optional[str] = None,
 ) -> str:
-    """Send a text prompt to Google Gemini and get a response.
+    """Send a prompt to Gemini. Can continue an existing Gemini chat by URL or chat_id.
+
+    To continue an existing conversation, pass its URL
+    (e.g. 'https://gemini.google.com/app/c_abc123') or raw chat ID as chat_id.
+    Do NOT use gemini_analyze_url for gemini.google.com links — they are chat IDs.
 
     Args:
         prompt: The text prompt to send to Gemini.
@@ -585,6 +626,9 @@ async def gemini_chat(
                'gemini-3.0-flash-thinking'). Defaults to gemini-3.0-flash.
         session_id: Optional session ID from gemini_start_chat for
                     multi-turn conversation with context.
+        chat_id: Optional Gemini chat ID or URL to continue an existing
+                 conversation. Accepts both raw ID ('c_abc123') and full URL
+                 ('https://gemini.google.com/app/c_abc123').
 
     Returns:
         Gemini's text response. When using flash-thinking model,
@@ -599,6 +643,13 @@ async def gemini_chat(
             if not chat:
                 return f"Error: Session '{session_id}' not found. Start a new one with gemini_start_chat."
             response = await chat.send_message(prompt)
+        elif chat_id:
+            from gemini_webapi import ChatSession
+            cid = _resolve_chat_id(chat_id)
+            chat = ChatSession(geminiclient=client, cid=cid, rid=None, rcid=None)
+            short_id = str(uuid.uuid4())[:8]
+            _get_sessions(ctx)[short_id] = chat
+            response = await chat.send_message(prompt)
         else:
             response = await client.generate_content(
                 prompt, model=model or DEFAULT_MODEL
@@ -606,9 +657,12 @@ async def gemini_chat(
 
         text = response.text or "(empty response)"
         thoughts = response.thoughts
+        suffix = ""
+        if chat_id and not session_id:
+            suffix = f"\n\n[session_id: {short_id}]"
         if thoughts:
-            return f"**Thinking:**\n{thoughts}\n\n**Response:**\n{text}"
-        return text
+            return f"**Thinking:**\n{thoughts}\n\n**Response:**\n{text}{suffix}"
+        return f"{text}{suffix}"
     except Exception as e:
         return _handle_error(e)
 
@@ -629,11 +683,13 @@ async def gemini_generate_image(
     files: Optional[list[str]] = None,
     session_id: Optional[str] = None,
     chat_id: Optional[str] = None,
+    model: Optional[str] = None,
 ) -> str:
-    """Generate or edit images with Gemini.
+    """Generate or edit images with Gemini. Can continue an existing chat by URL or chat_id.
 
     Without files: generates a new image from the text prompt.
     With files: edits/transforms the provided image(s) based on the prompt.
+    Do NOT use gemini_analyze_url for gemini.google.com links — they are chat IDs.
 
     Images are saved to ~/Pictures/gemini/ and full file paths are returned.
 
@@ -645,8 +701,9 @@ async def gemini_generate_image(
         files: Optional list of file paths to images to edit/transform.
         session_id: Optional MCP session ID from gemini_start_chat. Generates
                     images within an existing chat session (preserves context).
-        chat_id: Optional Gemini web chat ID from URL (e.g. '67c72239696d5d37').
-                 Connects to an existing Gemini web conversation.
+        chat_id: Optional Gemini chat ID or URL to continue an existing
+                 conversation. Accepts both raw ID ('c_abc123') and full URL
+                 ('https://gemini.google.com/app/c_abc123').
 
     Returns:
         JSON with generated image paths and metadata, or an error message.
@@ -673,7 +730,8 @@ async def gemini_generate_image(
                 return f"Error: Session '{session_id}' not found. Use gemini_start_chat first."
         elif chat_id:
             from gemini_webapi import ChatSession
-            chat = ChatSession(geminiclient=client, cid=chat_id, rid=None, rcid=None)
+            cid = _resolve_chat_id(chat_id)
+            chat = ChatSession(geminiclient=client, cid=cid, rid=None, rcid=None)
             short_id = str(uuid.uuid4())[:8]
             _get_sessions(ctx)[short_id] = chat
 
@@ -826,6 +884,9 @@ async def gemini_analyze_url(
     model: Optional[str] = None,
 ) -> str:
     """Analyze a URL — YouTube videos, webpages, articles, etc.
+
+    NOT for gemini.google.com/app/ links — those are Gemini chat IDs;
+    pass them as chat_id to gemini_chat or gemini_generate_image instead.
 
     Gemini can watch YouTube videos and read webpages, then answer
     questions about their content.
