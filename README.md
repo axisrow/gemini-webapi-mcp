@@ -55,9 +55,14 @@ uv run gemini-webapi-mcp
 
 ### 3. Добавьте MCP-конфиг
 
-Добавьте в `~/.config/mcp/mcp_servers.json`:
+<details>
+<summary><b>Claude Code</b></summary>
 
-**Из GitHub:**
+```bash
+claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
+```
+
+Или добавьте вручную в `.mcp.json` в корне проекта:
 
 ```json
 {
@@ -70,19 +75,54 @@ uv run gemini-webapi-mcp
 }
 ```
 
-> Без удаления вотермарки: замените `gemini-webapi-mcp[watermark]` на `gemini-webapi-mcp`.
+</details>
 
-**Локально (после клонирования):**
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Добавьте в конфиг Claude Desktop:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "/path/to/gemini-webapi-mcp", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
+```
+
+</details>
+
+<details>
+<summary><b>Другие MCP-клиенты</b></summary>
+
+Используйте стандартный MCP stdio-конфиг:
+
+```json
+{
+  "mcpServers": {
+    "gemini": {
+      "command": "uv",
+      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+    }
+  }
+}
+```
+
+Путь к файлу конфига зависит от вашего MCP-клиента.
+
+</details>
+
+> Без удаления вотермарки: замените `gemini-webapi-mcp[watermark]` на `gemini-webapi-mcp`.
+
+**Локальная установка (после клонирования)** — замените args на:
+
+```json
+"args": ["--directory", "/path/to/gemini-webapi-mcp", "run", "gemini-webapi-mcp"]
 ```
 
 ### 4. Установите скилл для Claude Code (опционально)
@@ -95,11 +135,13 @@ cp -r skill ~/.claude/skills/gemini-mcp
 
 ### 5. Проверьте
 
+Запустите сервер вручную — если инициализация прошла без ошибок, всё работает:
+
 ```bash
-mcp-cli call gemini gemini_chat '{"prompt": "Привет!"}'
+uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
 
-Если получили ответ — всё работает.
+После этого откройте Claude Code или Claude Desktop и попробуйте: *«Сгенерируй картинку кота в акварельном стиле через Gemini»*.
 
 ## Аутентификация
 
@@ -186,24 +228,22 @@ pip install onnxruntime
 
 ## Примеры использования
 
-Сгенерировать изображение:
-```bash
-mcp-cli call gemini gemini_generate_image '{"prompt": "кот в акварельном стиле"}'
-```
+После настройки MCP-конфига Claude сам вызывает нужные инструменты. Просто попросите в чате:
 
-Отредактировать изображение:
-```bash
-mcp-cli call gemini gemini_generate_image '{"prompt": "сделай кота серым", "files": ["/path/to/cat.png"]}'
-```
+| Задача | Что написать Claude |
+|--------|---------------------|
+| Сгенерировать изображение | *«Сгенерируй через Gemini кота в акварельном стиле»* |
+| Отредактировать изображение | *«Отредактируй через Gemini /path/to/cat.png — сделай кота серым»* |
+| Проанализировать видео | *«Проанализируй через Gemini это видео: https://youtube.com/watch?v=...»* |
+| Проанализировать файл | *«Загрузи в Gemini /path/to/doc.pdf и сделай краткое резюме»* |
 
-Проанализировать YouTube-видео или URL:
-```bash
-mcp-cli call gemini gemini_analyze_url '{"url": "https://youtube.com/watch?v=...", "prompt": "О чём это видео?"}'
-```
+Инструменты, которые Claude вызовет:
 
-Проанализировать файл:
-```bash
-mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "О чём это видео?"}'
+```
+gemini_generate_image(prompt="кот в акварельном стиле")
+gemini_generate_image(prompt="сделай кота серым", files=["/path/to/cat.png"])
+gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="О чём это видео?")
+gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай краткое резюме")
 ```
 
 ## Благодарности
@@ -275,9 +315,14 @@ uv run gemini-webapi-mcp
 
 ### 3. Add MCP config
 
-Add to `~/.config/mcp/mcp_servers.json`:
+<details>
+<summary><b>Claude Code</b></summary>
 
-**From GitHub:**
+```bash
+claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
+```
+
+Or add manually to `.mcp.json` in your project root:
 
 ```json
 {
@@ -290,19 +335,54 @@ Add to `~/.config/mcp/mcp_servers.json`:
 }
 ```
 
-> Without watermark removal: replace `gemini-webapi-mcp[watermark]` with `gemini-webapi-mcp`.
+</details>
 
-**Local (after cloning):**
+<details>
+<summary><b>Claude Desktop</b></summary>
+
+Add to Claude Desktop config:
+- macOS: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- Windows: `%APPDATA%\Claude\claude_desktop_config.json`
 
 ```json
 {
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "/path/to/gemini-webapi-mcp", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
+```
+
+</details>
+
+<details>
+<summary><b>Other MCP clients</b></summary>
+
+Use the standard MCP stdio config:
+
+```json
+{
+  "mcpServers": {
+    "gemini": {
+      "command": "uv",
+      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+    }
+  }
+}
+```
+
+Config file path depends on your MCP client.
+
+</details>
+
+> Without watermark removal: replace `gemini-webapi-mcp[watermark]` with `gemini-webapi-mcp`.
+
+**Local install (after cloning)** — replace args with:
+
+```json
+"args": ["--directory", "/path/to/gemini-webapi-mcp", "run", "gemini-webapi-mcp"]
 ```
 
 ### 4. Install the skill for Claude Code (optional)
@@ -315,9 +395,13 @@ cp -r skill ~/.claude/skills/gemini-mcp
 
 ### 5. Verify
 
+Run the server manually — if it initializes without errors, everything works:
+
 ```bash
-mcp-cli call gemini gemini_chat '{"prompt": "Hello!"}'
+uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
+
+Then open Claude Code or Claude Desktop and try: *"Generate a watercolor cat image with Gemini"*.
 
 ## Authentication
 
@@ -404,24 +488,22 @@ On first run, the LaMa model (208 MB) is automatically downloaded and cached in 
 
 ## Usage Examples
 
-Generate an image:
-```bash
-mcp-cli call gemini gemini_generate_image '{"prompt": "a cat in watercolor style"}'
-```
+Once configured, Claude calls the right tools automatically. Just ask in chat:
 
-Edit an image:
-```bash
-mcp-cli call gemini gemini_generate_image '{"prompt": "make it gray", "files": ["/path/to/cat.png"]}'
-```
+| Task | What to tell Claude |
+|------|---------------------|
+| Generate an image | *"Generate a watercolor cat with Gemini"* |
+| Edit an image | *"Edit /path/to/cat.png with Gemini — make the cat gray"* |
+| Analyze a video | *"Analyze this video with Gemini: https://youtube.com/watch?v=..."* |
+| Analyze a file | *"Upload /path/to/doc.pdf to Gemini and summarize it"* |
 
-Analyze a YouTube video or URL:
-```bash
-mcp-cli call gemini gemini_analyze_url '{"url": "https://youtube.com/watch?v=...", "prompt": "Summarize this video"}'
-```
+Tools that Claude will call:
 
-Analyze a file:
-```bash
-mcp-cli call gemini gemini_upload_file '{"file_path": "/path/to/video.mp4", "prompt": "What happens here?"}'
+```
+gemini_generate_image(prompt="a cat in watercolor style")
+gemini_generate_image(prompt="make it gray", files=["/path/to/cat.png"])
+gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this video")
+gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Summarize key points")
 ```
 
 ## Acknowledgements
