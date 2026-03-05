@@ -819,10 +819,11 @@ async def gemini_reset(ctx: Context) -> str:
 
         psid, psidts = _resolve_cookies()
 
+        account_index = int(os.environ.get("GEMINI_ACCOUNT_INDEX", "0"))
         new_client = GeminiClient(
-            secure_1psid=psid, secure_1psidts=psidts or None
+            secure_1psid=psid, secure_1psidts=psidts or None, account_index=account_index
         )
-        await new_client.init(timeout=30, auto_close=False, auto_refresh=True)
+        await new_client.init(timeout=600, watchdog_timeout=120, auto_close=False, auto_refresh=True)
         _patch_client(new_client)
 
         ctx.request_context.lifespan_context["gemini_client"] = new_client
