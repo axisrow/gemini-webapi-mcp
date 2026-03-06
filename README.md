@@ -27,7 +27,7 @@
 - **Редактирование изображений** — отправьте картинку + промпт и получите изменённую версию
 - **Анализ файлов** — видео, изображения, PDF, документы
 - **Текстовый чат** с Gemini (Flash, Pro, Flash-Thinking)
-- **Авто-удаление вотермарки** — нейросеть LaMa убирает sparkle-метку Gemini локально
+- **Авто-удаление вотермарки** — математически точное удаление sparkle-метки Gemini (Reverse Alpha Blending)
 - **Авто-аутентификация** через cookies из Chrome
 
 ## Быстрый старт
@@ -41,7 +41,7 @@
 **Из GitHub (без клонирования):**
 
 ```bash
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
+uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
 
 **Локальная установка:**
@@ -59,7 +59,7 @@ uv run gemini-webapi-mcp
 <summary><b>Claude Code</b></summary>
 
 ```bash
-claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
+claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
 ```
 
 Или добавьте вручную в `.mcp.json` в корне проекта:
@@ -69,7 +69,7 @@ claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webap
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -89,7 +89,7 @@ claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webap
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -107,7 +107,7 @@ claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webap
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -116,9 +116,6 @@ claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webap
 Путь к файлу конфига зависит от вашего MCP-клиента.
 
 </details>
-
-> Без удаления вотермарки: замените `gemini-webapi-mcp[watermark]` на `gemini-webapi-mcp`.
-
 **Локальная установка (после клонирования)** — замените args на:
 
 ```json
@@ -138,7 +135,7 @@ cp -r skill ~/.claude/skills/gemini-mcp
 Запустите сервер вручную — если инициализация прошла без ошибок, всё работает:
 
 ```bash
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
+uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
 
 После этого откройте Claude Code или Claude Desktop и попробуйте: *«Сгенерируй картинку кота в акварельном стиле через Gemini»*.
@@ -160,7 +157,7 @@ uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
       "env": {
         "GEMINI_PSID": "your__Secure-1PSID_value",
         "GEMINI_PSIDTS": "your__Secure-1PSIDTS_value"
@@ -193,19 +190,7 @@ uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/
 
 ## Удаление вотермарки
 
-Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер автоматически удаляет её с помощью нейросети [LaMa](https://github.com/advimman/lama).
-
-**Установка:**
-
-```bash
-# Из GitHub — с поддержкой удаления вотермарки
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
-
-# Или отдельно, если уже установлен
-pip install onnxruntime
-```
-
-При первом запуске модель LaMa (208 МБ) автоматически скачивается и кэшируется в `~/.cache/gemini-mcp/`. Если `onnxruntime` не установлен — сервер работает нормально, просто не удаляет вотермарку.
+Gemini добавляет sparkle-метку (четырёхконечную звёздочку) в правый нижний угол сгенерированных изображений. Сервер автоматически удаляет её с помощью алгоритма [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) — математически точного восстановления оригинальных пикселей. Никаких дополнительных зависимостей или скачивания моделей не требуется.
 
 ## Инструменты
 
@@ -250,6 +235,8 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай кратк
 
 Этот проект построен на основе библиотеки [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) от [@HanaokaYuzu](https://github.com/HanaokaYuzu) (форк [@xob0t](https://github.com/xob0t/Gemini-API) с поддержкой curl_cffi) — реверс-инжиниринговой асинхронной Python-обёртки для веб-приложения Google Gemini. Лицензия: AGPL-3.0.
 
+Удаление вотермарки основано на алгоритме [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) от [@allenk](https://github.com/allenk) (MIT License) и alpha-картах из [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) от [@GargantuaX](https://github.com/GargantuaX) (MIT License).
+
 ## Лицензия
 
 [AGPL-3.0](LICENSE) — свободно используйте, модифицируйте и распространяйте при условии сохранения открытости исходного кода.
@@ -287,7 +274,7 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай кратк
 - **Image editing** — send an image + prompt to get a modified version
 - **File analysis** — video, images, PDF, documents
 - **Text chat** with Gemini (Flash, Pro, Flash-Thinking)
-- **Auto watermark removal** — LaMa neural network removes Gemini's sparkle mark locally
+- **Auto watermark removal** — lossless sparkle mark removal using Reverse Alpha Blending
 - **Auto-authentication** via Chrome browser cookies
 
 ## Quick Start
@@ -301,7 +288,7 @@ Open Chrome, go to [gemini.google.com](https://gemini.google.com) and sign in.
 **From GitHub (no clone needed):**
 
 ```bash
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
+uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
 
 **Local install:**
@@ -319,7 +306,7 @@ uv run gemini-webapi-mcp
 <summary><b>Claude Code</b></summary>
 
 ```bash
-claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
+claude mcp add-json gemini '{"command":"uv","args":["run","--with","gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git","gemini-webapi-mcp"]}'
 ```
 
 Or add manually to `.mcp.json` in your project root:
@@ -329,7 +316,7 @@ Or add manually to `.mcp.json` in your project root:
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -349,7 +336,7 @@ Add to Claude Desktop config:
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -367,7 +354,7 @@ Use the standard MCP stdio config:
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"]
     }
   }
 }
@@ -376,9 +363,6 @@ Use the standard MCP stdio config:
 Config file path depends on your MCP client.
 
 </details>
-
-> Without watermark removal: replace `gemini-webapi-mcp[watermark]` with `gemini-webapi-mcp`.
-
 **Local install (after cloning)** — replace args with:
 
 ```json
@@ -398,7 +382,7 @@ cp -r skill ~/.claude/skills/gemini-mcp
 Run the server manually — if it initializes without errors, everything works:
 
 ```bash
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
+uv run --with "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
 ```
 
 Then open Claude Code or Claude Desktop and try: *"Generate a watercolor cat image with Gemini"*.
@@ -420,7 +404,7 @@ If cookie auto-detection fails, set them manually:
   "mcpServers": {
     "gemini": {
       "command": "uv",
-      "args": ["run", "--with", "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
+      "args": ["run", "--with", "gemini-webapi-mcp @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git", "gemini-webapi-mcp"],
       "env": {
         "GEMINI_PSID": "your__Secure-1PSID_value",
         "GEMINI_PSIDTS": "your__Secure-1PSIDTS_value"
@@ -453,19 +437,7 @@ If the 2x version is unavailable (timeout, network error), the server automatica
 
 ## Watermark Removal
 
-Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server automatically removes it using the [LaMa](https://github.com/advimman/lama) neural network.
-
-**Install:**
-
-```bash
-# From GitHub — with watermark removal support
-uv run --with "gemini-webapi-mcp[watermark] @ git+https://github.com/AndyShaman/gemini-webapi-mcp.git" gemini-webapi-mcp
-
-# Or separately, if already installed
-pip install onnxruntime
-```
-
-On first run, the LaMa model (208 MB) is automatically downloaded and cached in `~/.cache/gemini-mcp/`. If `onnxruntime` is not installed, the server works normally — it just doesn't remove the watermark.
+Gemini adds a sparkle watermark (4-point star) to the bottom-right corner of generated images. The server automatically removes it using the [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) algorithm — a mathematically lossless recovery of original pixel values. No extra dependencies or model downloads required.
 
 ## Tools
 
@@ -509,6 +481,8 @@ gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Summarize key points")
 ## Acknowledgements
 
 This project is built on top of [gemini-webapi](https://github.com/HanaokaYuzu/Gemini-API) by [@HanaokaYuzu](https://github.com/HanaokaYuzu) (fork by [@xob0t](https://github.com/xob0t/Gemini-API) with curl_cffi support) — a reverse-engineered async Python wrapper for the Google Gemini web app. Licensed under AGPL-3.0.
+
+Watermark removal based on the [Reverse Alpha Blending](https://github.com/allenk/GeminiWatermarkTool) algorithm by [@allenk](https://github.com/allenk) (MIT License) and alpha maps from [gemini-watermark-remover](https://github.com/GargantuaX/gemini-watermark-remover) by [@GargantuaX](https://github.com/GargantuaX) (MIT License).
 
 ## License
 
