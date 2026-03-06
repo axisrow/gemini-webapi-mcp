@@ -14,7 +14,6 @@ import random
 import re
 import string
 import sys
-import urllib.request
 import uuid
 from contextlib import asynccontextmanager
 from datetime import datetime
@@ -37,121 +36,86 @@ IMAGES_DIR = Path.home() / "Pictures" / "gemini"
 DEFAULT_MODEL = "gemini-3.0-flash"
 
 # ---------------------------------------------------------------------------
-# LaMa watermark removal (optional — requires onnxruntime)
+# Watermark removal — Reverse Alpha Blending
+# Algorithm: original = (watermarked - alpha * 255) / (1 - alpha)
+# Credit: AllenK (github.com/allenk/GeminiWatermarkTool, MIT License)
+#         GargantuaX (github.com/GargantuaX/gemini-watermark-remover, MIT License)
 # ---------------------------------------------------------------------------
-_LAMA_URL = "https://huggingface.co/Carve/LaMa-ONNX/resolve/main/lama_fp32.onnx"
-_LAMA_CACHE = Path.home() / ".cache" / "gemini-mcp" / "lama_fp32.onnx"
-_lama_session = None
-
-# Watermark is a 4-point sparkle (superellipse shape), fixed position:
-# center at (w-57, h-57). Measured across 1024x1024, 2048x1117,
-# 1536x2752, 2816x1536 images — position is stable.
-_WM_OFFSET = 57       # center offset from bottom-right corner
+_ALPHA_NOISE_FLOOR = 3.0 / 255.0   # ignore quantization noise in alpha map
+_ALPHA_THRESHOLD = 0.002            # skip near-zero alpha pixels
+_MAX_ALPHA = 0.99                   # avoid division by near-zero
+_alpha_maps: dict[int, "np.ndarray"] = {}
 
 
-def _get_lama_session():
-    """Download LaMa model on first use, return ONNX InferenceSession or None."""
-    global _lama_session
-    if _lama_session is not None:
-        return _lama_session
-    try:
-        import onnxruntime as ort
-    except ImportError:
-        return None
-    if not _LAMA_CACHE.exists():
-        _LAMA_CACHE.parent.mkdir(parents=True, exist_ok=True)
-        logger.info("Downloading LaMa model (208 MB)...")
-        urllib.request.urlretrieve(_LAMA_URL, _LAMA_CACHE)
-        logger.info("LaMa model downloaded to %s", _LAMA_CACHE)
-    _lama_session = ort.InferenceSession(
-        str(_LAMA_CACHE), providers=["CPUExecutionProvider"]
-    )
-    return _lama_session
+def _load_alpha_map(size: int) -> "np.ndarray":
+    """Load and cache pre-captured alpha map for given watermark size."""
+    if size in _alpha_maps:
+        return _alpha_maps[size]
 
-
-def _make_sparkle_mask(size: int, center: tuple[int, int], scale: int = 1) -> "np.ndarray":
-    """Create a 4-point star mask matching Gemini's sparkle watermark.
-
-    The sparkle follows a superellipse (Lamé curve): |x/R|^p + |y/R|^p <= 1
-    with p≈0.85, R=24px at native resolution. Measured from actual Gemini
-    output across multiple aspect ratios (1024x1024, 2048x1117, 1536x2752).
-
-    Returns a binary numpy uint8 array (0 or 255) for LaMa inpainting.
-
-    Args:
-        scale: 1 for native resolution, 2 for 2x upscaled images.
-    """
     import numpy as np
-    from PIL import Image, ImageFilter
+    from importlib.resources import files as pkg_files
+    from PIL import Image
 
-    cx, cy = center
-    R = 24 * scale   # sparkle radius: 24px at 1x, 48px at 2x
-    p = 0.85          # superellipse exponent (4-pointed star shape)
+    base_size = size if size in (48, 96) else 96
+    asset_path = pkg_files("gemini_webapi_mcp.assets").joinpath(f"bg_{base_size}.png")
+    bg = Image.open(asset_path).convert("RGB")
 
-    y_grid, x_grid = np.ogrid[:size, :size]
-    dx = np.abs(x_grid - cx).astype(float)
-    dy = np.abs(y_grid - cy).astype(float)
-    val = (dx / R) ** p + (dy / R) ** p
-    mask_arr = np.where(val <= 1.0, 255, 0).astype(np.uint8)
+    if base_size != size:
+        bg = bg.resize((size, size), Image.BILINEAR)
 
-    mask_img = Image.fromarray(mask_arr)
-    mf = 7 * scale + (0 if (7 * scale) % 2 == 1 else 1)  # 7 at 1x, 15 at 2x
-    dilated = mask_img.filter(ImageFilter.MaxFilter(mf))
-    return np.array(dilated)
+    bg_arr = np.array(bg, dtype=np.float32)
+    alpha_map = np.max(bg_arr, axis=2) / 255.0
+    _alpha_maps[size] = alpha_map
+    return alpha_map
 
 
-def _remove_watermark(image_path: str, scale: int = 1) -> bool:
-    """Remove Gemini sparkle watermark from bottom-right corner using LaMa.
+def _remove_watermark(image_path: str) -> bool:
+    """Remove Gemini sparkle watermark using Reverse Alpha Blending.
 
-    The watermark is always at a fixed position: center at (w-57, h-57) for
-    native (1x) images. For 2x upscaled images, position and size double.
-    Returns True if removed, False if onnxruntime is not available.
+    Detects watermark size and position from image dimensions:
+    - Both sides > 1024: 96px logo, 64px margins
+    - Otherwise: 48px logo, 32px margins
 
-    Args:
-        scale: 1 for native resolution, 2 for 2x upscaled images.
+    Returns True if watermark was removed.
     """
-    session = _get_lama_session()
-    if session is None:
-        return False
-
     import numpy as np
     from PIL import Image
 
-    img = Image.open(image_path)
+    img = Image.open(image_path).convert("RGB")
     w, h = img.size
-    if w < 512 or h < 512:
+
+    if w < 200 or h < 200:
         return False
 
-    offset = _WM_OFFSET * scale  # 57 at 1x, 114 at 2x
+    if w > 1024 and h > 1024:
+        logo_size, margin_right, margin_bottom = 96, 64, 64
+    else:
+        logo_size, margin_right, margin_bottom = 48, 32, 32
 
-    # --- Crop 512x512 from bottom-right for LaMa ---
-    crop_x0 = w - 512
-    crop_y0 = h - 512
-    crop = img.crop((crop_x0, crop_y0, w, h))
+    wm_x = w - margin_right - logo_size
+    wm_y = h - margin_bottom - logo_size
 
-    # Watermark center within the 512x512 crop
-    local_cx = 512 - offset
-    local_cy = 512 - offset
+    if wm_x < 0 or wm_y < 0:
+        return False
 
-    # --- Build mask ---
-    mask_arr = _make_sparkle_mask(512, (local_cx, local_cy), scale=scale)
+    alpha_map = _load_alpha_map(logo_size)
+    pixels = np.array(img, dtype=np.float64)
 
-    # --- LaMa inference ---
-    crop_rgb = np.array(crop).astype(np.float32) / 255.0       # (512,512,3)
-    img_input = crop_rgb.transpose(2, 0, 1)[None]               # (1,3,512,512)
-    mask_input = (mask_arr.astype(np.float32) / 255.0)[None, None]  # (1,1,512,512)
+    for row in range(logo_size):
+        for col in range(logo_size):
+            raw_alpha = alpha_map[row, col]
+            if max(0.0, raw_alpha - _ALPHA_NOISE_FLOOR) < _ALPHA_THRESHOLD:
+                continue
 
-    output = session.run(None, {"image": img_input, "mask": mask_input})[0]
-    # LaMa output is already in 0-255 range (not 0-1)
-    result = output[0].transpose(1, 2, 0).clip(0, 255).astype(np.uint8)
+            alpha = min(raw_alpha, _MAX_ALPHA)
+            inv = 1.0 / (1.0 - alpha)
 
-    # --- Paste back only masked pixels ---
-    result_img = Image.fromarray(result)
-    mask_pil = Image.fromarray(mask_arr)
-    crop.paste(result_img, mask=mask_pil)
-    img.paste(crop, (crop_x0, crop_y0))
+            py = wm_y + row
+            px = wm_x + col
+            for c in range(3):
+                pixels[py, px, c] = max(0.0, min(255.0, (pixels[py, px, c] - alpha * 255.0) * inv))
 
-    img.save(image_path)
+    Image.fromarray(pixels.astype(np.uint8)).save(image_path)
     return True
 
 
@@ -686,13 +650,8 @@ async def gemini_generate_image(
             if not filepath:
                 continue
 
-            from PIL import Image as _PILImage
-            _saved_img = _PILImage.open(filepath)
-            _sw, _sh = _saved_img.size
-            _saved_img.close()
-            wm_scale = 2 if max(_sw, _sh) > 1500 else 1
             try:
-                if _remove_watermark(filepath, scale=wm_scale):
+                if _remove_watermark(filepath):
                     logger.info("Watermark removed from %s", filepath)
             except Exception as wm_err:
                 logger.warning("Watermark removal failed: %s", wm_err)
