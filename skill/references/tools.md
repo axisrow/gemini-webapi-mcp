@@ -49,6 +49,7 @@ Generate new images or edit existing ones. Watermark auto-removed.
 | `prompt` | yes | — | Image description or editing instruction |
 | `files` | no | — | List of file paths for image editing |
 | `model` | no | `gemini-3.0-flash-thinking` | Image model (Nano Banana 2, supports aspect ratios) |
+| `conversation_id` | no | — | Continue an existing image conversation using the latest returned metadata |
 
 **Generate:**
 ```
@@ -59,6 +60,18 @@ gemini_generate_image(prompt="a serene mountain lake at sunset, oil painting sty
 ```
 gemini_generate_image(prompt="make the sky purple", files=["/path/to/image.png"])
 ```
+
+**Continue image refinement in the same conversation:**
+```
+gemini_generate_image(prompt="make the lighting more dramatic", conversation_id=["c_abc", "r_123", "rc_456"])
+```
+
+**Image continuation rules:**
+- Pass `conversation_id` from the latest successful `gemini_generate_image` response when continuing image edits or variations.
+- Treat `conversation_id` as rolling metadata, not a permanent identifier. Usually `cid` stays stable, while `rid` and `rcid` change after each new response.
+- After each follow-up generation, use the newly returned `conversation_id` for the next step.
+- Write the next `prompt` as a refinement or variation of the existing image, not as a completely unrelated new scene.
+- If you only have a Gemini chat URL or `cid`, passing just `[cid]` also works, but the full latest `[cid, rid, rcid]` is preferred.
 
 **Output:** PNG saved to `~/Pictures/gemini/`, 2x upscaled resolution. Watermark auto-removed.
 
