@@ -232,6 +232,7 @@ gemini_generate_image(prompt="сделай кота серым", files=["/path/t
 gemini_generate_image(prompt="сделай фон темнее", conversation_id=["c_abc", "r_123", "rc_456"])
 gemini_resume_chat(chat_id="https://gemini.google.com/app/c_abc123")
 gemini_chat(prompt="Продолжи этот чат", session_id="abcd1234")
+gemini_generate_image(prompt="сделай ещё одну вариацию", session_id="abcd1234")
 gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="О чём это видео?")
 gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Сделай краткое резюме")
 ```
@@ -484,6 +485,7 @@ gemini_generate_image(prompt="make it gray", files=["/path/to/cat.png"])
 gemini_generate_image(prompt="make the background darker", conversation_id=["c_abc", "r_123", "rc_456"])
 gemini_resume_chat(chat_id="https://gemini.google.com/app/c_abc123")
 gemini_chat(prompt="Continue this chat", session_id="abcd1234")
+gemini_generate_image(prompt="make one more variation", session_id="abcd1234")
 gemini_analyze_url(url="https://youtube.com/watch?v=...", prompt="Summarize this video")
 gemini_upload_file(file_path="/path/to/doc.pdf", prompt="Summarize key points")
 ```

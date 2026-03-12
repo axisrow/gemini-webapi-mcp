@@ -620,6 +620,7 @@ async def gemini_generate_image(
     model: Optional[str] = None,
     files: Optional[list[str]] = None,
     conversation_id: Optional[list[str]] = None,
+    session_id: Optional[str] = None,
 ) -> str:
     """Generate or edit images with Gemini.
 
@@ -641,6 +642,8 @@ async def gemini_generate_image(
         conversation_id: Optional list of [cid, rid, rcid] from a previous
                          gemini_generate_image response to continue the conversation.
                          Passing just [cid] (from browser URL) also works.
+        session_id: Optional session ID from gemini_start_chat for generating
+                    images inside an existing local chat session.
 
     Returns:
         JSON with generated image paths, conversation_id for continuation, or an error message.
@@ -662,7 +665,18 @@ async def gemini_generate_image(
         async with _image_lock:
             _image_mode = True
             try:
-                if conversation_id:
+                if conversation_id and session_id:
+                    return "Error: Pass only one of conversation_id or session_id."
+                if session_id:
+                    sessions = _get_sessions(ctx)
+                    chat = sessions.get(session_id)
+                    if not chat:
+                        return f"Error: Session '{session_id}' not found. Start a new one with gemini_start_chat."
+                    chat.model = model or "gemini-3.0-flash-thinking"
+                    response = await chat.send_message(
+                        prompt, files=resolved_files or None
+                    )
+                elif conversation_id:
                     chat = client.start_chat(
                         metadata=conversation_id,
                         model=model or "gemini-3.0-flash-thinking",
