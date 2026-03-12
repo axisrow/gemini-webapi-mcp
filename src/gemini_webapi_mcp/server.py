@@ -210,6 +210,14 @@ def _get_sessions(ctx: Context) -> dict:
     return ctx.request_context.lifespan_context["chat_sessions"]
 
 
+def _resolve_chat_id(raw: str) -> str:
+    """Extract cid from a Gemini URL or return raw chat_id as-is."""
+    m = re.match(r"https?://gemini\.google\.com/app/(?:c_)?([a-f0-9]+)", raw)
+    if m:
+        return f"c_{m.group(1)}"
+    return raw
+
+
 _image_mode = False
 _image_lock = asyncio.Lock()
 
@@ -499,6 +507,46 @@ async def gemini_start_chat(
             "session_id": session_id,
             "model": model or DEFAULT_MODEL,
             "message": f"Chat session started. Use session_id '{session_id}' in gemini_chat.",
+        })
+    except Exception as e:
+        return _handle_error(e)
+
+
+@mcp.tool(
+    name="gemini_resume_chat",
+    annotations={
+        "title": "Resume Gemini Chat Session",
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "idempotentHint": True,
+        "openWorldHint": True,
+    },
+)
+async def gemini_resume_chat(
+    chat_id: str,
+    ctx: Context,
+) -> str:
+    """Attach a local session_id to an existing Gemini chat by URL or chat ID.
+
+    Args:
+        chat_id: Raw Gemini chat ID like 'c_abc123' or a full Gemini URL
+                 like 'https://gemini.google.com/app/c_abc123'.
+
+    Returns:
+        JSON with session_id and canonical chat_id to use in gemini_chat.
+    """
+    try:
+        from gemini_webapi import ChatSession
+
+        client = _get_client(ctx)
+        cid = _resolve_chat_id(chat_id)
+        chat = ChatSession(geminiclient=client, cid=cid, rid=None, rcid=None)
+        session_id = str(uuid.uuid4())[:8]
+        _get_sessions(ctx)[session_id] = chat
+        return json.dumps({
+            "session_id": session_id,
+            "chat_id": cid,
+            "message": f"Chat session resumed. Use session_id '{session_id}' in gemini_chat.",
         })
     except Exception as e:
         return _handle_error(e)
