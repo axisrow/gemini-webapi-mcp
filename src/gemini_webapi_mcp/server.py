@@ -885,3 +885,48 @@ async def gemini_reset(ctx: Context) -> str:
 
     except Exception as e:
         return _handle_error(e)
+
+
+@mcp.tool(
+    name="gemini_delete_chat",
+    annotations={
+        "title": "Delete Gemini Chat",
+        "readOnlyHint": False,
+        "destructiveHint": True,
+        "idempotentHint": True,
+        "openWorldHint": False,
+    },
+)
+async def gemini_delete_chat(
+    chat_id: str,
+    ctx: Context,
+) -> str:
+    """Delete a Gemini conversation by its chat ID or URL.
+
+    Args:
+        chat_id: Raw Gemini chat ID like 'c_abc123' or a full Gemini URL
+                 like 'https://gemini.google.com/app/c_abc123'.
+
+    Returns:
+        JSON with the deleted chat ID and any removed local session IDs.
+    """
+    try:
+        cid = _resolve_chat_id(chat_id)
+        client = _get_client(ctx)
+        await client.delete_chat(cid)
+
+        sessions = _get_sessions(ctx)
+        removed_sessions = [
+            session_id
+            for session_id, chat in sessions.items()
+            if getattr(chat, "cid", None) == cid
+        ]
+        for session_id in removed_sessions:
+            del sessions[session_id]
+
+        return json.dumps({
+            "deleted": cid,
+            "removed_sessions": removed_sessions,
+        })
+    except Exception as e:
+        return _handle_error(e)
